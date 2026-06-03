@@ -137,10 +137,37 @@ td {
   color: #9f2a2a;
 }
 
+.example-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.7rem;
+  margin-top: 0.7rem;
+}
+
+.math-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.6rem;
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.math-card h4 {
+  margin: 0 0 0.3rem;
+  font-size: 0.92rem;
+}
+
+.math-card p {
+  font-size: 0.85rem;
+}
+
 @media (max-width: 900px) {
   .hero-stats,
   .panel-grid,
   .field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .example-grid {
     grid-template-columns: 1fr;
   }
 

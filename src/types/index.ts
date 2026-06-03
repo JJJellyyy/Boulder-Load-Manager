@@ -27,6 +27,7 @@ export interface ProblemEntry {
   grade: Grade;
   holdType: HoldType;
   wallAngle: WallAngle;
+  climbedOn?: string;
 }
 
 export interface SessionInput {

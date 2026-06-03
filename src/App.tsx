@@ -13,6 +13,9 @@ import {
 import { updateSnapshot } from "./domain/ewma";
 import { DEFAULT_SETTINGS, clampSettings } from "./domain/loadModelConfig";
 import {
+  calculateGradeIntensity,
+  calculateSleepRecoveryMultiplier,
+  calculateSpeedMultiplier,
   calculateSessionLoad,
   gradeToNumber,
   suggestedCapacityRange,
@@ -64,6 +67,10 @@ function getId(): string {
   return `${Date.now()}-${Math.round(Math.random() * 100_000)}`;
 }
 
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function App() {
   const [tab, setTab] = useState<TabName>("session");
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
@@ -78,6 +85,7 @@ function App() {
   const [entryGrade, setEntryGrade] = useState<Grade>("V4");
   const [entryHold, setEntryHold] = useState<HoldType>("mixed");
   const [entryAngle, setEntryAngle] = useState<WallAngle>("vert");
+  const [entryDate, setEntryDate] = useState<string>(todayIsoDate());
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
   const totalProblems = useMemo(
@@ -108,6 +116,56 @@ function App() {
     () => suggestedCapacityRange(settings.climberMaxGrade),
     [settings.climberMaxGrade],
   );
+
+  const ewmaExample = useMemo(() => {
+    const dummyProblems = 24;
+    const dummyDuration = 120;
+    const dummySleep = 7.5;
+    const prevEwma = 110;
+    const windowDays = 15;
+
+    const baselineGrade = calculateGradeIntensity("V6", settings);
+    const baselineSpeed = calculateSpeedMultiplier(dummyProblems, dummyDuration, settings);
+    const baselineRecovery = calculateSleepRecoveryMultiplier(dummySleep, settings);
+    const baselineLoad = dummyProblems * baselineGrade * baselineSpeed * baselineRecovery;
+    const alpha = 2 / (windowDays + 1);
+    const nextEwma = alpha * baselineLoad + (1 - alpha) * prevEwma;
+
+    const hardGradeLoad =
+      dummyProblems *
+      calculateGradeIntensity("V9", settings) *
+      baselineSpeed *
+      baselineRecovery;
+
+    const fasterPaceLoad =
+      dummyProblems *
+      baselineGrade *
+      calculateSpeedMultiplier(dummyProblems, 75, settings) *
+      baselineRecovery;
+
+    const poorSleepLoad =
+      dummyProblems *
+      baselineGrade *
+      baselineSpeed *
+      calculateSleepRecoveryMultiplier(6.0, settings);
+
+    return {
+      dummyProblems,
+      dummyDuration,
+      dummySleep,
+      prevEwma,
+      windowDays,
+      alpha,
+      baselineGrade,
+      baselineSpeed,
+      baselineRecovery,
+      baselineLoad,
+      nextEwma,
+      hardGradeLoad,
+      fasterPaceLoad,
+      poorSleepLoad,
+    };
+  }, [settings]);
 
   useEffect(() => {
     async function bootstrap() {
@@ -152,6 +210,7 @@ function App() {
           grade: entryGrade,
           holdType: entryHold,
           wallAngle: entryAngle,
+          climbedOn: entryDate,
         },
       ],
     }));
@@ -362,6 +421,14 @@ function App() {
             <h2>Quick Problem Entry</h2>
             <div className="field-grid">
               <label>
+                Date
+                <input
+                  type="date"
+                  value={entryDate}
+                  onChange={(event) => setEntryDate(event.target.value)}
+                />
+              </label>
+              <label>
                 Problems (1-100)
                 <input
                   type="number"
@@ -484,6 +551,7 @@ function App() {
               <table>
                 <thead>
                   <tr>
+                    <th>Date</th>
                     <th>Count</th>
                     <th>Grade</th>
                     <th>Hold</th>
@@ -494,6 +562,7 @@ function App() {
                 <tbody>
                   {draft.problems.map((problem) => (
                     <tr key={problem.id}>
+                      <td>{problem.climbedOn ?? todayIsoDate()}</td>
                       <td>{problem.count}</td>
                       <td>{problem.grade}</td>
                       <td>{problem.holdType}</td>
@@ -749,6 +818,55 @@ function App() {
               <button type="button" onClick={() => void handleDriveRestore()}>
                 Restore Backup
               </button>
+            </div>
+
+            <h3>EWMA Math Demo</h3>
+            <p>
+              Dummy session: {ewmaExample.dummyProblems} problems, {ewmaExample.dummyDuration} min, {" "}
+              {ewmaExample.dummySleep.toFixed(1)}h sleep, with previous EWMA {ewmaExample.prevEwma.toFixed(1)}.
+            </p>
+            <p>
+              Base load = problems x gradeIntensity x speedMultiplier x recoveryMultiplier
+            </p>
+            <p>
+              Base load = {ewmaExample.dummyProblems} x {ewmaExample.baselineGrade.toFixed(3)} x {" "}
+              {ewmaExample.baselineSpeed.toFixed(3)} x {ewmaExample.baselineRecovery.toFixed(3)} = {" "}
+              {ewmaExample.baselineLoad.toFixed(2)}
+            </p>
+            <p>
+              EWMA update (window {ewmaExample.windowDays}): next = alpha x load + (1 - alpha) x previous
+            </p>
+            <p>
+              alpha = 2 / ({ewmaExample.windowDays} + 1) = {ewmaExample.alpha.toFixed(3)}
+            </p>
+            <p>
+              next = {ewmaExample.alpha.toFixed(3)} x {ewmaExample.baselineLoad.toFixed(2)} + {" "}
+              {(1 - ewmaExample.alpha).toFixed(3)} x {ewmaExample.prevEwma.toFixed(1)} = {" "}
+              {ewmaExample.nextEwma.toFixed(2)}
+            </p>
+
+            <div className="example-grid">
+              <article className="math-card">
+                <h4>Grade harder (V6 to V9)</h4>
+                <p>Load changes to {ewmaExample.hardGradeLoad.toFixed(2)}</p>
+                <p>
+                  Delta: {(ewmaExample.hardGradeLoad - ewmaExample.baselineLoad).toFixed(2)}
+                </p>
+              </article>
+              <article className="math-card">
+                <h4>Climb faster (120 to 75 min)</h4>
+                <p>Load changes to {ewmaExample.fasterPaceLoad.toFixed(2)}</p>
+                <p>
+                  Delta: {(ewmaExample.fasterPaceLoad - ewmaExample.baselineLoad).toFixed(2)}
+                </p>
+              </article>
+              <article className="math-card">
+                <h4>Sleep less (7.5h to 6.0h)</h4>
+                <p>Load changes to {ewmaExample.poorSleepLoad.toFixed(2)}</p>
+                <p>
+                  Delta: {(ewmaExample.poorSleepLoad - ewmaExample.baselineLoad).toFixed(2)}
+                </p>
+              </article>
             </div>
           </article>
         </section>
