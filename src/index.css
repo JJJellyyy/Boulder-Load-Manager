@@ -1,0 +1,38 @@
+:root {
+  --bg: #f6efe3;
+  --text: #15222e;
+  --muted: #476071;
+  --brand: #0f7f88;
+  --border: #c7d2d8;
+
+  font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  line-height: 1.45;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  min-height: 100vh;
+  background:
+    linear-gradient(125deg, rgba(255, 147, 41, 0.15), transparent 45%),
+    radial-gradient(circle at 15% 30%, rgba(28, 114, 144, 0.22), transparent 30%),
+    var(--bg);
+}
+
+h1,
+h2,
+h3 {
+  margin: 0 0 0.5rem;
+}
+
+p {
+  margin: 0;
+}
