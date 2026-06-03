@@ -17,6 +17,7 @@ import {
   calculateSleepRecoveryMultiplier,
   calculateSpeedMultiplier,
   calculateSessionLoad,
+  gradeToDisplay,
   gradeToNumber,
   suggestedCapacityRange,
 } from "./domain/loadCalculator";
@@ -34,6 +35,7 @@ import {
   type EWMADays,
   type EWMASnapshot,
   type Grade,
+  type GradeDisplayUnit,
   type HoldType,
   type ProblemEntry,
   type SessionInput,
@@ -352,6 +354,12 @@ function App() {
     });
   }, [settings]);
 
+  const displayGradeLabel = (grade: Grade): string => gradeToDisplay(grade, settings.gradeDisplayUnit);
+  const gradeFromNumber = (value: number): Grade => {
+    const bounded = Math.min(17, Math.max(0, Math.round(value)));
+    return `V${bounded}` as Grade;
+  };
+
   useEffect(() => {
     async function bootstrap() {
       const [savedSettings, savedSessions, savedSnapshots] = await Promise.all([
@@ -561,8 +569,9 @@ function App() {
           <p className="eyebrow">Boulder Load Manager</p>
           <h1>ACWR + EWMA Load Tracking</h1>
           <p>
-            Capacity range suggestion for max {settings.climberMaxGrade}: V
-            {capacityRange.min.toFixed(1)} to V{capacityRange.max.toFixed(1)}
+            Capacity range suggestion for max {displayGradeLabel(settings.climberMaxGrade)}: {" "}
+            {displayGradeLabel(gradeFromNumber(capacityRange.min))} to {" "}
+            {displayGradeLabel(gradeFromNumber(capacityRange.max))}
           </p>
         </div>
         <div className="hero-stats">
@@ -628,7 +637,7 @@ function App() {
                 <select value={entryGrade} onChange={(event) => setEntryGrade(event.target.value as Grade)}>
                   {GRADES.map((grade) => (
                     <option key={grade} value={grade}>
-                      {grade}
+                      {displayGradeLabel(grade)}
                     </option>
                   ))}
                 </select>
@@ -749,7 +758,7 @@ function App() {
                     <tr key={problem.id}>
                       <td>{problem.climbedOn ?? todayIsoDate()}</td>
                       <td>{problem.count}</td>
-                      <td>{problem.grade}</td>
+                      <td>{displayGradeLabel(problem.grade)}</td>
                       <td>{problem.holdType}</td>
                       <td>{problem.wallAngle}</td>
                       <td>
@@ -824,9 +833,23 @@ function App() {
                 >
                   {GRADES.map((grade) => (
                     <option key={grade} value={grade}>
-                      {grade}
+                      {displayGradeLabel(grade)}
                     </option>
                   ))}
+                </select>
+              </label>
+              <label>
+                Grade unit
+                <select
+                  value={settings.gradeDisplayUnit}
+                  onChange={(event) =>
+                    patchSettings((next) => {
+                      next.gradeDisplayUnit = event.target.value as GradeDisplayUnit;
+                    })
+                  }
+                >
+                  <option value="v">V grade</option>
+                  <option value="font">Font</option>
                 </select>
               </label>
               <label>
@@ -860,66 +883,79 @@ function App() {
             <h2>Model Tuning</h2>
             <div className="field-grid">
               <label>
-                Grade exponent
+                Grade base points (V0)
                 <input
                   type="number"
-                  step={0.05}
-                  value={settings.model.gradeIntensity.exponent}
+                  step={1}
+                  value={settings.model.gradeIntensity.basePoints}
                   onChange={(event) =>
                     patchSettings((next) => {
-                      next.model.gradeIntensity.exponent = Number(event.target.value);
+                      next.model.gradeIntensity.basePoints = Number(event.target.value);
                     })
                   }
                 />
               </label>
               <label>
-                Grade base
+                Grade multiplier per grade
                 <input
                   type="number"
                   step={0.05}
-                  value={settings.model.gradeIntensity.base}
+                  value={settings.model.gradeIntensity.multiplierPerGrade}
                   onChange={(event) =>
                     patchSettings((next) => {
-                      next.model.gradeIntensity.base = Number(event.target.value);
+                      next.model.gradeIntensity.multiplierPerGrade = Number(event.target.value);
                     })
                   }
                 />
               </label>
               <label>
-                Grade scale
+                Speed target minutes per boulder
                 <input
                   type="number"
                   step={0.05}
-                  value={settings.model.gradeIntensity.scale}
+                  value={settings.model.speed.targetMinutesPerBoulder}
                   onChange={(event) =>
                     patchSettings((next) => {
-                      next.model.gradeIntensity.scale = Number(event.target.value);
+                      next.model.speed.targetMinutesPerBoulder = Number(event.target.value);
                     })
                   }
                 />
               </label>
               <label>
-                Speed baseline (problems/min)
+                Speed exponent
                 <input
                   type="number"
                   step={0.01}
-                  value={settings.model.speed.baselineProblemsPerMinute}
+                  value={settings.model.speed.exponent}
                   onChange={(event) =>
                     patchSettings((next) => {
-                      next.model.speed.baselineProblemsPerMinute = Number(event.target.value);
+                      next.model.speed.exponent = Number(event.target.value);
                     })
                   }
                 />
               </label>
               <label>
-                Speed curve steepness
+                Sleep penalty exponent
                 <input
                   type="number"
                   step={0.1}
-                  value={settings.model.speed.curveSteepness}
+                  value={settings.model.recovery.sleepPenalty.exponent}
                   onChange={(event) =>
                     patchSettings((next) => {
-                      next.model.speed.curveSteepness = Number(event.target.value);
+                      next.model.recovery.sleepPenalty.exponent = Number(event.target.value);
+                    })
+                  }
+                />
+              </label>
+              <label>
+                Max sleep penalty
+                <input
+                  type="number"
+                  step={0.01}
+                  value={settings.model.recovery.sleepPenalty.maxPenalty}
+                  onChange={(event) =>
+                    patchSettings((next) => {
+                      next.model.recovery.sleepPenalty.maxPenalty = Number(event.target.value);
                     })
                   }
                 />
@@ -997,54 +1033,6 @@ function App() {
                   }
                 />
               </label>
-              <label>
-                Penalty at 10% deficit
-                <input
-                  type="number"
-                  step={0.01}
-                  value={settings.model.recovery.sleepPenalty.points.find((point) => point.deficit === 0.1)?.penalty ?? 0.05}
-                  onChange={(event) =>
-                    patchSettings((next) => {
-                      const point = next.model.recovery.sleepPenalty.points.find((entry) => entry.deficit === 0.1);
-                      if (point) {
-                        point.penalty = Number(event.target.value);
-                      }
-                    })
-                  }
-                />
-              </label>
-              <label>
-                Penalty at 20% deficit
-                <input
-                  type="number"
-                  step={0.01}
-                  value={settings.model.recovery.sleepPenalty.points.find((point) => point.deficit === 0.2)?.penalty ?? 0.15}
-                  onChange={(event) =>
-                    patchSettings((next) => {
-                      const point = next.model.recovery.sleepPenalty.points.find((entry) => entry.deficit === 0.2);
-                      if (point) {
-                        point.penalty = Number(event.target.value);
-                      }
-                    })
-                  }
-                />
-              </label>
-              <label>
-                Penalty at 30% deficit
-                <input
-                  type="number"
-                  step={0.01}
-                  value={settings.model.recovery.sleepPenalty.points.find((point) => point.deficit === 0.3)?.penalty ?? 0.3}
-                  onChange={(event) =>
-                    patchSettings((next) => {
-                      const point = next.model.recovery.sleepPenalty.points.find((entry) => entry.deficit === 0.3);
-                      if (point) {
-                        point.penalty = Number(event.target.value);
-                      }
-                    })
-                  }
-                />
-              </label>
             </div>
             <button type="button" onClick={() => setSettings(DEFAULT_SETTINGS)}>
               Reset defaults
@@ -1099,7 +1087,7 @@ function App() {
                 yLabel="Intensity"
                 points={gradeCurvePoints}
                 stroke="#0f7f88"
-                xFormatter={(value) => `V${value.toFixed(0)}`}
+                xFormatter={(value) => gradeToDisplay(gradeFromNumber(value), settings.gradeDisplayUnit)}
                 yFormatter={(value) => value.toFixed(2)}
               />
               <CurveChart

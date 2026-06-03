@@ -1,4 +1,8 @@
 export const GRADES = [
+  "V0",
+  "V1",
+  "V2",
+  "V3",
   "V4",
   "V5",
   "V6",
@@ -9,7 +13,32 @@ export const GRADES = [
   "V11",
   "V12",
   "V13",
+  "V14",
+  "V15",
+  "V16",
+  "V17",
 ] as const;
+
+export const FONT_BY_GRADE: Record<(typeof GRADES)[number], string> = {
+  V0: "4",
+  V1: "5",
+  V2: "5+",
+  V3: "6A",
+  V4: "6A+",
+  V5: "6B",
+  V6: "6C",
+  V7: "7A",
+  V8: "7B",
+  V9: "7C",
+  V10: "7C+",
+  V11: "8A",
+  V12: "8A+",
+  V13: "8B",
+  V14: "8B+",
+  V15: "8C",
+  V16: "8C+",
+  V17: "9A",
+};
 
 export const HOLD_TYPES = ["crimps", "sloper", "pockets", "mixed"] as const;
 
@@ -20,6 +49,7 @@ export type HoldType = (typeof HOLD_TYPES)[number];
 export type WallAngle = (typeof WALL_ANGLES)[number];
 
 export type EWMADays = 10 | 15 | 20 | 25;
+export type GradeDisplayUnit = "v" | "font";
 
 export interface ProblemEntry {
   id: string;
@@ -58,33 +88,23 @@ export interface EWMASnapshot {
 }
 
 export interface GradeIntensityConfig {
-  exponent: number;
-  base: number;
-  scale: number;
-  minimum: number;
-  maximum: number;
+  basePoints: number;
+  multiplierPerGrade: number;
 }
 
 export interface SpeedMultiplierConfig {
-  baselineProblemsPerMinute: number;
-  curveSteepness: number;
+  targetMinutesPerBoulder: number;
+  exponent: number;
   maxMultiplier: number;
   minMultiplier: number;
 }
 
-export interface SleepPenaltyPoint {
-  deficit: number;
-  penalty: number;
-}
-
-export interface SleepPenaltyConfig {
-  points: SleepPenaltyPoint[];
-  maxPenalty: number;
-}
-
 export interface RecoveryConfig {
   personalMaxSleepHours: number;
-  sleepPenalty: SleepPenaltyConfig;
+  sleepPenalty: {
+    exponent: number;
+    maxPenalty: number;
+  };
 }
 
 export interface LoadModelConfig {
@@ -103,6 +123,7 @@ export interface LoadModelConfig {
 
 export interface AppSettings {
   climberMaxGrade: Grade;
+  gradeDisplayUnit: GradeDisplayUnit;
   stressScaleMax: number;
   motivationScaleMax: number;
   model: LoadModelConfig;

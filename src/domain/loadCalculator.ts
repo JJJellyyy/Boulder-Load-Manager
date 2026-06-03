@@ -3,74 +3,103 @@ import type {
   BoulderTypeLoad,
   CalculationResult,
   Grade,
+  GradeDisplayUnit,
   HoldType,
   ProblemEntry,
   SessionInput,
-  SleepPenaltyPoint,
   WallAngle,
 } from "../types";
+import { FONT_BY_GRADE } from "../types";
+const GRADES_ORDER = [
+  "V0",
+  "V1",
+  "V2",
+  "V3",
+  "V4",
+  "V5",
+  "V6",
+  "V7",
+  "V8",
+  "V9",
+  "V10",
+  "V11",
+  "V12",
+  "V13",
+  "V14",
+  "V15",
+  "V16",
+  "V17",
+] as const;
 
-const V_GRADE_OFFSET = 4;
+const FONT_TO_V: Record<string, Grade> = {
+  "4": "V0",
+  "5": "V1",
+  "5+": "V2",
+  "6A": "V3",
+  "6A+": "V4",
+  "6B": "V5",
+  "6B+": "V6",
+  "6C": "V6",
+  "6C+": "V7",
+  "7A": "V7",
+  "7A+": "V8",
+  "7B": "V8",
+  "7B+": "V9",
+  "7C": "V9",
+  "7C+": "V10",
+  "8A": "V11",
+  "8A+": "V12",
+  "8B": "V13",
+  "8B+": "V14",
+  "8C": "V15",
+  "8C+": "V16",
+  "9A": "V17",
+};
 
 export function gradeToNumber(grade: Grade): number {
   return Number(grade.replace("V", ""));
 }
 
-function relativeIntensity(problemGrade: Grade, climberMaxGrade: Grade): number {
-  const problem = gradeToNumber(problemGrade);
-  const max = gradeToNumber(climberMaxGrade);
+export function gradeToPoints(grade: Grade, settings: AppSettings): number {
+  const gradeNumber = gradeToNumber(grade);
+  return settings.model.gradeIntensity.basePoints * Math.pow(settings.model.gradeIntensity.multiplierPerGrade, gradeNumber);
+}
 
-  if (max <= 0) {
-    return 1;
+export function gradeToDisplay(grade: Grade, unit: GradeDisplayUnit): string {
+  if (unit === "font") {
+    return FONT_BY_GRADE[grade];
   }
 
-  return Math.max(0, problem / max);
+  return grade;
+}
+
+export function displayToGrade(display: string, unit: GradeDisplayUnit): Grade | undefined {
+  if (unit === "v") {
+    return (GRADES_ORDER.find((grade) => grade === display) as Grade | undefined);
+  }
+
+  return FONT_TO_V[display.toUpperCase()];
 }
 
 export function calculateGradeIntensity(problemGrade: Grade, settings: AppSettings): number {
-  const { exponent, base, scale, minimum, maximum } = settings.model.gradeIntensity;
-  const relative = relativeIntensity(problemGrade, settings.climberMaxGrade);
-
-  const weighted = base + scale * Math.pow(relative, exponent);
-  return clamp(weighted, minimum, maximum);
+  return gradeToPoints(problemGrade, settings);
 }
 
 export function calculateSpeedMultiplier(totalProblems: number, durationMinutes: number, settings: AppSettings): number {
+  const safeProblems = Math.max(1, totalProblems);
   const safeDuration = Math.max(1, durationMinutes);
-  const pace = totalProblems / safeDuration;
+  const minutesPerBoulder = safeDuration / safeProblems;
   const speed = settings.model.speed;
 
-  const normalized = pace / Math.max(0.01, speed.baselineProblemsPerMinute);
-  const growth = 1 - Math.exp(-speed.curveSteepness * normalized);
-
-  const value = speed.minMultiplier + growth * (speed.maxMultiplier - speed.minMultiplier);
+  const normalized = speed.targetMinutesPerBoulder / Math.max(0.05, minutesPerBoulder);
+  const value = Math.pow(normalized, speed.exponent);
   return clamp(value, speed.minMultiplier, speed.maxMultiplier);
-}
-
-function interpolatePenalty(points: SleepPenaltyPoint[], deficit: number): number {
-  const sorted = [...points].sort((a, b) => a.deficit - b.deficit);
-
-  if (deficit <= sorted[0].deficit) {
-    return sorted[0].penalty;
-  }
-
-  for (let index = 0; index < sorted.length - 1; index += 1) {
-    const start = sorted[index];
-    const end = sorted[index + 1];
-
-    if (deficit <= end.deficit) {
-      const ratio = (deficit - start.deficit) / Math.max(0.0001, end.deficit - start.deficit);
-      return start.penalty + ratio * (end.penalty - start.penalty);
-    }
-  }
-
-  return sorted[sorted.length - 1].penalty;
 }
 
 export function calculateSleepRecoveryMultiplier(actualSleepHours: number, settings: AppSettings): number {
   const personalMax = Math.max(0.1, settings.model.recovery.personalMaxSleepHours);
   const deficit = clamp((personalMax - actualSleepHours) / personalMax, 0, 1);
-  const penalty = interpolatePenalty(settings.model.recovery.sleepPenalty.points, deficit);
+  const penalty = settings.model.recovery.sleepPenalty.maxPenalty * Math.pow(deficit, settings.model.recovery.sleepPenalty.exponent);
   return 1 - clamp(penalty, 0, settings.model.recovery.sleepPenalty.maxPenalty);
 }
 
@@ -128,9 +157,9 @@ export function calculateSessionLoad(session: SessionInput, settings: AppSetting
 }
 
 export function suggestedCapacityRange(climberMaxGrade: Grade): { min: number; max: number } {
-  const maxNumeric = gradeToNumber(climberMaxGrade) - V_GRADE_OFFSET;
-  const min = V_GRADE_OFFSET + Math.max(0, maxNumeric * 0.4);
-  const max = V_GRADE_OFFSET + Math.max(0, maxNumeric * 0.6);
+  const maxNumeric = gradeToNumber(climberMaxGrade);
+  const min = Math.max(0, maxNumeric * 0.4);
+  const max = Math.max(min, maxNumeric * 0.6);
   return { min, max };
 }
 
