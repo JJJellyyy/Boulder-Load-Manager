@@ -182,6 +182,67 @@ function CurveChart({
   );
 }
 
+interface NumberInputProps {
+  value: number;
+  onCommit: (value: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
+function NumberInput({ value, onCommit, min, max, step }: NumberInputProps) {
+  const [text, setText] = useState<string>(String(value));
+
+  useEffect(() => {
+    setText(String(value));
+  }, [value]);
+
+  function commitValue() {
+    if (text.trim() === "") {
+      setText(String(value));
+      return;
+    }
+
+    const parsed = Number(text);
+    if (Number.isNaN(parsed)) {
+      setText(String(value));
+      return;
+    }
+
+    let next = parsed;
+    if (typeof min === "number") {
+      next = Math.max(min, next);
+    }
+    if (typeof max === "number") {
+      next = Math.min(max, next);
+    }
+
+    onCommit(next);
+    setText(String(next));
+  }
+
+  return (
+    <input
+      type="number"
+      min={min}
+      max={max}
+      step={step}
+      value={text}
+      onChange={(event) => setText(event.target.value)}
+      onBlur={commitValue}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          commitValue();
+        }
+
+        if (event.key === "Escape") {
+          setText(String(value));
+        }
+      }}
+    />
+  );
+}
+
 function App() {
   const [tab, setTab] = useState<TabName>("session");
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
@@ -819,12 +880,12 @@ function App() {
               </label>
               <label>
                 Problems (1-100)
-                <input
-                  type="number"
+                <NumberInput
+                  value={entryCount}
                   min={1}
                   max={100}
-                  value={entryCount}
-                  onChange={(event) => setEntryCount(Number(event.target.value))}
+                  step={1}
+                  onCommit={(value) => setEntryCount(Math.round(value))}
                 />
               </label>
               <label>
@@ -871,55 +932,56 @@ function App() {
             <div className="field-grid">
               <label>
                 Duration (minutes)
-                <input
-                  type="number"
-                  min={10}
+                <NumberInput
                   value={draft.durationMinutes}
-                  onChange={(event) => {
-                    const value = Number(event.target.value);
-                    setDraft((previous) => ({ ...previous, durationMinutes: Math.max(10, value) }));
-                  }}
+                  min={10}
+                  step={1}
+                  onCommit={(value) =>
+                    setDraft((previous) => ({ ...previous, durationMinutes: Math.round(value) }))
+                  }
                 />
               </label>
               <label>
                 Sleep before session (hours)
-                <input
-                  type="number"
+                <NumberInput
+                  value={draft.sleepHours}
                   min={0}
                   max={12}
                   step={0.25}
-                  value={draft.sleepHours}
-                  onChange={(event) => {
-                    const value = Number(event.target.value);
-                    setDraft((previous) => ({ ...previous, sleepHours: Math.max(0, value) }));
-                  }}
+                  onCommit={(value) => setDraft((previous) => ({ ...previous, sleepHours: value }))}
                 />
               </label>
               <label>
                 Stress ({settings.stressScaleMax} max)
-                <input
-                  type="number"
-                  min={1}
-                  max={settings.stressScaleMax}
+                <select
                   value={draft.stress}
                   onChange={(event) => {
                     const value = Number(event.target.value);
                     setDraft((previous) => ({ ...previous, stress: value }));
                   }}
-                />
+                >
+                  {Array.from({ length: settings.stressScaleMax }, (_, index) => index + 1).map((value) => (
+                    <option key={`stress-${value}`} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label>
                 Motivation ({settings.motivationScaleMax} max)
-                <input
-                  type="number"
-                  min={1}
-                  max={settings.motivationScaleMax}
+                <select
                   value={draft.motivation}
                   onChange={(event) => {
                     const value = Number(event.target.value);
                     setDraft((previous) => ({ ...previous, motivation: value }));
                   }}
-                />
+                >
+                  {Array.from({ length: settings.motivationScaleMax }, (_, index) => index + 1).map((value) => (
+                    <option key={`motivation-${value}`} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
               </label>
             </div>
 
@@ -1066,24 +1128,28 @@ function App() {
               </label>
               <label>
                 Stress scale max
-                <input
-                  type="number"
+                <NumberInput
                   value={settings.stressScaleMax}
-                  onChange={(event) =>
+                  min={3}
+                  max={20}
+                  step={1}
+                  onCommit={(value) =>
                     patchSettings((next) => {
-                      next.stressScaleMax = Number(event.target.value);
+                      next.stressScaleMax = Math.round(value);
                     })
                   }
                 />
               </label>
               <label>
                 Motivation scale max
-                <input
-                  type="number"
+                <NumberInput
                   value={settings.motivationScaleMax}
-                  onChange={(event) =>
+                  min={3}
+                  max={20}
+                  step={1}
+                  onCommit={(value) =>
                     patchSettings((next) => {
-                      next.motivationScaleMax = Number(event.target.value);
+                      next.motivationScaleMax = Math.round(value);
                     })
                   }
                 />
@@ -1096,78 +1162,60 @@ function App() {
             <div className="field-grid">
               <label>
                 Grade base points (V0)
-                <input
-                  type="number"
-                  step={1}
+                <NumberInput
                   value={settings.model.gradeIntensity.basePoints}
-                  onChange={(event) =>
+                  min={1}
+                  max={100}
+                  step={1}
+                  onCommit={(value) =>
                     patchSettings((next) => {
-                      next.model.gradeIntensity.basePoints = Number(event.target.value);
+                      next.model.gradeIntensity.basePoints = value;
                     })
                   }
                 />
               </label>
               <label>
                 Grade multiplier per grade
-                <input
-                  type="number"
-                  step={0.05}
+                <NumberInput
                   value={settings.model.gradeIntensity.multiplierPerGrade}
-                  onChange={(event) =>
-                    patchSettings((next) => {
-                      next.model.gradeIntensity.multiplierPerGrade = Number(event.target.value);
-                    })
-                  }
-                />
-              </label>
-              <label>
-                Speed target minutes per boulder
-                <input
-                  type="number"
+                  min={1.01}
+                  max={10}
                   step={0.05}
-                  value={settings.model.speed.targetMinutesPerBoulder}
-                  onChange={(event) =>
+                  onCommit={(value) =>
                     patchSettings((next) => {
-                      next.model.speed.targetMinutesPerBoulder = Number(event.target.value);
+                      next.model.gradeIntensity.multiplierPerGrade = value;
                     })
                   }
                 />
               </label>
               <label>
-                Speed exponent
-                <input
-                  type="number"
-                  step={0.01}
-                  value={settings.model.speed.exponent}
-                  onChange={(event) =>
-                    patchSettings((next) => {
-                      next.model.speed.exponent = Number(event.target.value);
-                    })
-                  }
-                />
+                Speed model
+                <input value="Fixed: 10 min = x0, 1 min = x5 (exponential)" readOnly />
               </label>
               <label>
                 Sleep penalty exponent
-                <input
-                  type="number"
-                  step={0.1}
+                <NumberInput
                   value={settings.model.recovery.sleepPenalty.exponent}
-                  onChange={(event) =>
+                  min={0.1}
+                  max={10}
+                  step={0.1}
+                  onCommit={(value) =>
                     patchSettings((next) => {
-                      next.model.recovery.sleepPenalty.exponent = Number(event.target.value);
+                      next.model.recovery.sleepPenalty.exponent = value;
                     })
                   }
                 />
               </label>
               <label>
                 Max sleep penalty
-                <input
-                  type="number"
-                  step={0.01}
+                <NumberInput
                   value={settings.model.recovery.sleepPenalty.maxPenalty}
-                  onChange={(event) =>
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  onCommit={(value) =>
                     patchSettings((next) => {
-                      next.model.recovery.sleepPenalty.maxPenalty = Number(event.target.value);
+                      next.model.recovery.sleepPenalty.maxPenalty = value;
                     })
                   }
                 />
@@ -1208,39 +1256,42 @@ function App() {
               </label>
               <label>
                 ACWR low threshold
-                <input
-                  type="number"
-                  step={0.05}
+                <NumberInput
                   value={settings.model.acwr.lowThreshold}
-                  onChange={(event) =>
+                  min={0.1}
+                  max={3}
+                  step={0.05}
+                  onCommit={(value) =>
                     patchSettings((next) => {
-                      next.model.acwr.lowThreshold = Number(event.target.value);
+                      next.model.acwr.lowThreshold = value;
                     })
                   }
                 />
               </label>
               <label>
                 ACWR high threshold
-                <input
-                  type="number"
-                  step={0.05}
+                <NumberInput
                   value={settings.model.acwr.highThreshold}
-                  onChange={(event) =>
+                  min={0.1}
+                  max={4}
+                  step={0.05}
+                  onCommit={(value) =>
                     patchSettings((next) => {
-                      next.model.acwr.highThreshold = Number(event.target.value);
+                      next.model.acwr.highThreshold = value;
                     })
                   }
                 />
               </label>
               <label>
                 Sleep max hours
-                <input
-                  type="number"
-                  step={0.25}
+                <NumberInput
                   value={settings.model.recovery.personalMaxSleepHours}
-                  onChange={(event) =>
+                  min={1}
+                  max={14}
+                  step={0.25}
+                  onCommit={(value) =>
                     patchSettings((next) => {
-                      next.model.recovery.personalMaxSleepHours = Number(event.target.value);
+                      next.model.recovery.personalMaxSleepHours = value;
                     })
                   }
                 />

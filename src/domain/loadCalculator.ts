@@ -84,15 +84,19 @@ export function calculateGradeIntensity(problemGrade: Grade, settings: AppSettin
   return gradeToPoints(problemGrade, settings);
 }
 
-export function calculateSpeedMultiplier(totalProblems: number, durationMinutes: number, settings: AppSettings): number {
+export function calculateSpeedMultiplier(totalProblems: number, durationMinutes: number, _settings: AppSettings): number {
   const safeProblems = Math.max(1, totalProblems);
   const safeDuration = Math.max(1, durationMinutes);
   const minutesPerBoulder = safeDuration / safeProblems;
-  const speed = settings.model.speed;
 
-  const normalized = speed.targetMinutesPerBoulder / Math.max(0.05, minutesPerBoulder);
-  const value = Math.pow(normalized, speed.exponent);
-  return clamp(value, speed.minMultiplier, speed.maxMultiplier);
+  // Fixed exponential pace model:
+  // 10 min per boulder => x0 intensity contribution, 1 min per boulder => x5.
+  const clampedMinutes = clamp(minutesPerBoulder, 1, 10);
+  const progress = (10 - clampedMinutes) / 9;
+  const steepness = 2.2;
+  const scaled = (Math.exp(steepness * progress) - 1) / (Math.exp(steepness) - 1);
+  const value = scaled * 5;
+  return clamp(value, 0, 5);
 }
 
 export function calculateSleepRecoveryMultiplier(actualSleepHours: number, settings: AppSettings): number {
