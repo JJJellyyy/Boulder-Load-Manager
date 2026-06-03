@@ -100,6 +100,74 @@ function getAcwrZone(acwr: number, lowThreshold: number, highThreshold: number):
   return "Goldilocks";
 }
 
+interface CurvePoint {
+  x: number;
+  y: number;
+}
+
+interface CurveChartProps {
+  title: string;
+  xLabel: string;
+  yLabel: string;
+  points: CurvePoint[];
+  stroke: string;
+  xFormatter?: (value: number) => string;
+  yFormatter?: (value: number) => string;
+}
+
+function CurveChart({
+  title,
+  xLabel,
+  yLabel,
+  points,
+  stroke,
+  xFormatter = (value) => value.toFixed(2),
+  yFormatter = (value) => value.toFixed(2),
+}: CurveChartProps) {
+  const width = 320;
+  const height = 180;
+  const pad = 22;
+
+  if (points.length < 2) {
+    return (
+      <article className="curve-card">
+        <h4>{title}</h4>
+        <p>Not enough data points to draw curve.</p>
+      </article>
+    );
+  }
+
+  const minX = Math.min(...points.map((point) => point.x));
+  const maxX = Math.max(...points.map((point) => point.x));
+  const minY = Math.min(...points.map((point) => point.y));
+  const maxY = Math.max(...points.map((point) => point.y));
+
+  const spanX = Math.max(0.0001, maxX - minX);
+  const spanY = Math.max(0.0001, maxY - minY);
+
+  const polyline = points
+    .map((point) => {
+      const x = pad + ((point.x - minX) / spanX) * (width - pad * 2);
+      const y = height - pad - ((point.y - minY) / spanY) * (height - pad * 2);
+      return `${x},${y}`;
+    })
+    .join(" ");
+
+  return (
+    <article className="curve-card">
+      <h4>{title}</h4>
+      <svg className="curve-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={title}>
+        <line x1={pad} y1={height - pad} x2={width - pad} y2={height - pad} className="curve-axis" />
+        <line x1={pad} y1={pad} x2={pad} y2={height - pad} className="curve-axis" />
+        <polyline points={polyline} fill="none" stroke={stroke} strokeWidth="3" strokeLinecap="round" />
+      </svg>
+      <p className="curve-caption">
+        {xLabel}: {xFormatter(minX)} to {xFormatter(maxX)} | {yLabel}: {yFormatter(minY)} to {yFormatter(maxY)}
+      </p>
+    </article>
+  );
+}
+
 function App() {
   const [tab, setTab] = useState<TabName>("session");
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
@@ -247,6 +315,41 @@ function App() {
       fasterPaceAcwr: projectAcwr(fasterPaceLoad),
       poorSleepAcwr: projectAcwr(poorSleepLoad),
     };
+  }, [settings]);
+
+  const gradeCurvePoints = useMemo(
+    () =>
+      GRADES.map((grade) => ({
+        x: gradeToNumber(grade),
+        y: calculateGradeIntensity(grade, settings),
+      })),
+    [settings],
+  );
+
+  const speedCurvePoints = useMemo(
+    () =>
+      Array.from({ length: 16 }, (_, index) => {
+        const problemsPerHour = 8 + index * 4;
+        return {
+          x: problemsPerHour,
+          y: calculateSpeedMultiplier(problemsPerHour, 60, settings),
+        };
+      }),
+    [settings],
+  );
+
+  const sleepPenaltyCurvePoints = useMemo(() => {
+    const maxSleep = settings.model.recovery.personalMaxSleepHours;
+
+    return Array.from({ length: 16 }, (_, index) => {
+      const deficit = index * 0.03;
+      const actualSleep = maxSleep * (1 - deficit);
+      const recovery = calculateSleepRecoveryMultiplier(actualSleep, settings);
+      return {
+        x: deficit * 100,
+        y: (1 - recovery) * 100,
+      };
+    });
   }, [settings]);
 
   useEffect(() => {
@@ -987,6 +1090,37 @@ function App() {
               ACWR = Acute EWMA / Chronic EWMA = {acwrExample.nextAcuteEwma.toFixed(2)} / {" "}
               {acwrExample.nextChronicEwma.toFixed(2)} = {acwrExample.nextAcwr.toFixed(2)}
             </p>
+
+            <h3>Model Curves</h3>
+            <div className="curve-grid">
+              <CurveChart
+                title="Grade Intensity Curve"
+                xLabel="Grade"
+                yLabel="Intensity"
+                points={gradeCurvePoints}
+                stroke="#0f7f88"
+                xFormatter={(value) => `V${value.toFixed(0)}`}
+                yFormatter={(value) => value.toFixed(2)}
+              />
+              <CurveChart
+                title="Speed Multiplier Curve"
+                xLabel="Problems per hour"
+                yLabel="Speed multiplier"
+                points={speedCurvePoints}
+                stroke="#d97706"
+                xFormatter={(value) => value.toFixed(0)}
+                yFormatter={(value) => `${value.toFixed(2)}x`}
+              />
+              <CurveChart
+                title="Sleep Penalty Curve"
+                xLabel="Sleep deficit %"
+                yLabel="Penalty %"
+                points={sleepPenaltyCurvePoints}
+                stroke="#9f2a2a"
+                xFormatter={(value) => `${value.toFixed(0)}%`}
+                yFormatter={(value) => `${value.toFixed(1)}%`}
+              />
+            </div>
 
             <div className="example-grid">
               <article className="math-card">
