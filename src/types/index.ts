@@ -42,7 +42,7 @@ export const FONT_BY_GRADE: Record<(typeof GRADES)[number], string> = {
 
 export const HOLD_TYPES = ["crimps", "sloper", "pockets", "mixed"] as const;
 
-export const WALL_ANGLES = ["slab", "vert", "overhang", "roof", "board"] as const;
+export const WALL_ANGLES = ["slab", "vert", "overhang", "roof", "board", "mixed"] as const;
 
 export type Grade = (typeof GRADES)[number];
 export type HoldType = (typeof HOLD_TYPES)[number];

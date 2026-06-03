@@ -5,7 +5,6 @@ import type {
   Grade,
   GradeDisplayUnit,
   HoldType,
-  ProblemEntry,
   SessionInput,
   WallAngle,
 } from "../types";
@@ -107,44 +106,46 @@ function getBoulderKey(holdType: HoldType, wallAngle: WallAngle): string {
   return `${holdType}__${wallAngle}`;
 }
 
-function aggregateProblemGroups(problems: ProblemEntry[]): Map<string, ProblemEntry[]> {
-  const grouped = new Map<string, ProblemEntry[]>();
-
-  for (const problem of problems) {
-    const key = getBoulderKey(problem.holdType, problem.wallAngle);
-    const existing = grouped.get(key) ?? [];
-    existing.push(problem);
-    grouped.set(key, existing);
+function expandWallAngles(wallAngle: WallAngle): WallAngle[] {
+  if (wallAngle === "mixed") {
+    return ["slab", "vert", "overhang", "roof"];
   }
 
-  return grouped;
+  return [wallAngle];
 }
 
 export function calculateSessionLoad(session: SessionInput, settings: AppSettings): CalculationResult {
   const totalProblems = session.problems.reduce((sum, item) => sum + item.count, 0);
   const speedMultiplier = calculateSpeedMultiplier(totalProblems, session.durationMinutes, settings);
   const recoveryMultiplier = calculateSleepRecoveryMultiplier(session.sleepHours, settings);
-  const grouped = aggregateProblemGroups(session.problems);
+  const grouped = new Map<string, BoulderTypeLoad>();
 
-  const byBoulderType: BoulderTypeLoad[] = [];
+  for (const problem of session.problems) {
+    const gradeIntensity = calculateGradeIntensity(problem.grade, settings);
+    const targetAngles = expandWallAngles(problem.wallAngle);
+    const splitCount = problem.count / targetAngles.length;
 
-  for (const [key, entries] of grouped.entries()) {
-    const holdType = entries[0].holdType;
-    const wallAngle = entries[0].wallAngle;
+    for (const angle of targetAngles) {
+      const key = getBoulderKey(problem.holdType, angle);
+      const rawContribution = splitCount * gradeIntensity;
+      const existing = grouped.get(key);
 
-    const rawLoad = entries.reduce((sum, item) => {
-      const gradeIntensity = calculateGradeIntensity(item.grade, settings);
-      return sum + item.count * gradeIntensity;
-    }, 0);
-
-    byBoulderType.push({
-      key,
-      holdType,
-      wallAngle,
-      rawLoad,
-      adjustedLoad: rawLoad * speedMultiplier * recoveryMultiplier,
-    });
+      if (existing) {
+        existing.rawLoad += rawContribution;
+        existing.adjustedLoad = existing.rawLoad * speedMultiplier * recoveryMultiplier;
+      } else {
+        grouped.set(key, {
+          key,
+          holdType: problem.holdType,
+          wallAngle: angle,
+          rawLoad: rawContribution,
+          adjustedLoad: rawContribution * speedMultiplier * recoveryMultiplier,
+        });
+      }
+    }
   }
+
+  const byBoulderType = Array.from(grouped.values());
 
   const totalLoad = byBoulderType.reduce((sum, item) => sum + item.adjustedLoad, 0);
 
