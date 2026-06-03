@@ -32,12 +32,54 @@ export const DEFAULT_SETTINGS: AppSettings = {
       },
     },
     ewmaWindows: [10, 15, 20, 25],
+    acwr: {
+      acuteWindow: 10,
+      chronicWindow: 25,
+      lowThreshold: 0.8,
+      highThreshold: 1.2,
+    },
     showAllCombinations: true,
   },
 };
 
 export function clampSettings(input: AppSettings): AppSettings {
-  const next = structuredClone(input);
+  const incoming = (input ?? DEFAULT_SETTINGS) as Partial<AppSettings>;
+  const next: AppSettings = {
+    climberMaxGrade: incoming.climberMaxGrade ?? DEFAULT_SETTINGS.climberMaxGrade,
+    stressScaleMax: incoming.stressScaleMax ?? DEFAULT_SETTINGS.stressScaleMax,
+    motivationScaleMax: incoming.motivationScaleMax ?? DEFAULT_SETTINGS.motivationScaleMax,
+    model: {
+      gradeIntensity: {
+        ...DEFAULT_SETTINGS.model.gradeIntensity,
+        ...(incoming.model?.gradeIntensity ?? {}),
+      },
+      speed: {
+        ...DEFAULT_SETTINGS.model.speed,
+        ...(incoming.model?.speed ?? {}),
+      },
+      recovery: {
+        personalMaxSleepHours:
+          incoming.model?.recovery?.personalMaxSleepHours ??
+          DEFAULT_SETTINGS.model.recovery.personalMaxSleepHours,
+        sleepPenalty: {
+          maxPenalty:
+            incoming.model?.recovery?.sleepPenalty?.maxPenalty ??
+            DEFAULT_SETTINGS.model.recovery.sleepPenalty.maxPenalty,
+          points:
+            incoming.model?.recovery?.sleepPenalty?.points?.length
+              ? incoming.model.recovery.sleepPenalty.points
+              : DEFAULT_SETTINGS.model.recovery.sleepPenalty.points,
+        },
+      },
+      ewmaWindows: incoming.model?.ewmaWindows ?? DEFAULT_SETTINGS.model.ewmaWindows,
+      acwr: {
+        ...DEFAULT_SETTINGS.model.acwr,
+        ...(incoming.model?.acwr ?? {}),
+      },
+      showAllCombinations:
+        incoming.model?.showAllCombinations ?? DEFAULT_SETTINGS.model.showAllCombinations,
+    },
+  };
 
   next.stressScaleMax = clamp(next.stressScaleMax, 3, 20);
   next.motivationScaleMax = clamp(next.motivationScaleMax, 3, 20);
@@ -62,6 +104,37 @@ export function clampSettings(input: AppSettings): AppSettings {
       deficit: clamp(point.deficit, 0, 1),
       penalty: clamp(point.penalty, 0, 1),
     }));
+
+  const allowedWindows = [10, 15, 20, 25] as const;
+  const filteredWindows = next.model.ewmaWindows.filter((windowValue) =>
+    allowedWindows.includes(windowValue),
+  );
+  next.model.ewmaWindows = filteredWindows.length ? filteredWindows : [...DEFAULT_SETTINGS.model.ewmaWindows];
+
+  next.model.acwr.lowThreshold = clamp(next.model.acwr.lowThreshold, 0.3, 1.5);
+  next.model.acwr.highThreshold = clamp(next.model.acwr.highThreshold, next.model.acwr.lowThreshold + 0.05, 2.5);
+
+  if (!allowedWindows.includes(next.model.acwr.acuteWindow)) {
+    next.model.acwr.acuteWindow = DEFAULT_SETTINGS.model.acwr.acuteWindow;
+  }
+
+  if (!allowedWindows.includes(next.model.acwr.chronicWindow)) {
+    next.model.acwr.chronicWindow = DEFAULT_SETTINGS.model.acwr.chronicWindow;
+  }
+
+  if (next.model.acwr.acuteWindow === next.model.acwr.chronicWindow) {
+    next.model.acwr.chronicWindow = next.model.acwr.acuteWindow === 25 ? 20 : 25;
+  }
+
+  if (!next.model.ewmaWindows.includes(next.model.acwr.acuteWindow)) {
+    next.model.ewmaWindows = [...next.model.ewmaWindows, next.model.acwr.acuteWindow];
+  }
+
+  if (!next.model.ewmaWindows.includes(next.model.acwr.chronicWindow)) {
+    next.model.ewmaWindows = [...next.model.ewmaWindows, next.model.acwr.chronicWindow];
+  }
+
+  next.model.ewmaWindows = [...new Set(next.model.ewmaWindows)].sort((a, b) => a - b);
 
   return next;
 }

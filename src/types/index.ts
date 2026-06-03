@@ -92,6 +92,12 @@ export interface LoadModelConfig {
   speed: SpeedMultiplierConfig;
   recovery: RecoveryConfig;
   ewmaWindows: EWMADays[];
+  acwr: {
+    acuteWindow: EWMADays;
+    chronicWindow: EWMADays;
+    lowThreshold: number;
+    highThreshold: number;
+  };
   showAllCombinations: boolean;
 }
 

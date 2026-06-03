@@ -31,6 +31,7 @@ import {
   WALL_ANGLES,
   type AppSettings,
   type DriveBackupPayload,
+  type EWMADays,
   type EWMASnapshot,
   type Grade,
   type HoldType,
@@ -69,6 +70,34 @@ function getId(): string {
 
 function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+function getEwmaValue(snapshot: EWMASnapshot, windowDays: EWMADays): number {
+  if (windowDays === 10) {
+    return snapshot.ewma10;
+  }
+
+  if (windowDays === 15) {
+    return snapshot.ewma15;
+  }
+
+  if (windowDays === 20) {
+    return snapshot.ewma20;
+  }
+
+  return snapshot.ewma25;
+}
+
+function getAcwrZone(acwr: number, lowThreshold: number, highThreshold: number): string {
+  if (acwr < lowThreshold) {
+    return "Detraining";
+  }
+
+  if (acwr > highThreshold) {
+    return "High Risk";
+  }
+
+  return "Goldilocks";
 }
 
 function App() {
@@ -117,19 +146,64 @@ function App() {
     [settings.climberMaxGrade],
   );
 
-  const ewmaExample = useMemo(() => {
+  const acwrRows = useMemo(() => {
+    const acuteWindow = settings.model.acwr.acuteWindow;
+    const chronicWindow = settings.model.acwr.chronicWindow;
+
+    return Object.values(ewmaSnapshots)
+      .map((snapshot) => {
+        const acute = getEwmaValue(snapshot, acuteWindow);
+        const chronic = getEwmaValue(snapshot, chronicWindow);
+        const acwr = chronic <= 0 ? 0 : acute / chronic;
+
+        return {
+          key: snapshot.key,
+          acute,
+          chronic,
+          acwr,
+          zone: getAcwrZone(acwr, settings.model.acwr.lowThreshold, settings.model.acwr.highThreshold),
+        };
+      })
+      .sort((a, b) => b.acwr - a.acwr);
+  }, [ewmaSnapshots, settings.model.acwr]);
+
+  const acwrSummary = useMemo(() => {
+    if (acwrRows.length === 0) {
+      return { avgAcwr: 0, highRiskCount: 0, goldilocksCount: 0 };
+    }
+
+    const avgAcwr = acwrRows.reduce((sum, row) => sum + row.acwr, 0) / acwrRows.length;
+    const highRiskCount = acwrRows.filter((row) => row.zone === "High Risk").length;
+    const goldilocksCount = acwrRows.filter((row) => row.zone === "Goldilocks").length;
+
+    return { avgAcwr, highRiskCount, goldilocksCount };
+  }, [acwrRows]);
+
+  const acwrExample = useMemo(() => {
     const dummyProblems = 24;
     const dummyDuration = 120;
     const dummySleep = 7.5;
-    const prevEwma = 110;
-    const windowDays = 15;
+    const prevAcuteEwma = 95;
+    const prevChronicEwma = 110;
+
+    const acuteWindow = settings.model.acwr.acuteWindow;
+    const chronicWindow = settings.model.acwr.chronicWindow;
+    const acuteAlpha = 2 / (acuteWindow + 1);
+    const chronicAlpha = 2 / (chronicWindow + 1);
 
     const baselineGrade = calculateGradeIntensity("V6", settings);
     const baselineSpeed = calculateSpeedMultiplier(dummyProblems, dummyDuration, settings);
     const baselineRecovery = calculateSleepRecoveryMultiplier(dummySleep, settings);
     const baselineLoad = dummyProblems * baselineGrade * baselineSpeed * baselineRecovery;
-    const alpha = 2 / (windowDays + 1);
-    const nextEwma = alpha * baselineLoad + (1 - alpha) * prevEwma;
+    const nextAcuteEwma = acuteAlpha * baselineLoad + (1 - acuteAlpha) * prevAcuteEwma;
+    const nextChronicEwma = chronicAlpha * baselineLoad + (1 - chronicAlpha) * prevChronicEwma;
+    const nextAcwr = nextChronicEwma <= 0 ? 0 : nextAcuteEwma / nextChronicEwma;
+
+    function projectAcwr(newLoad: number): number {
+      const acute = acuteAlpha * newLoad + (1 - acuteAlpha) * prevAcuteEwma;
+      const chronic = chronicAlpha * newLoad + (1 - chronicAlpha) * prevChronicEwma;
+      return chronic <= 0 ? 0 : acute / chronic;
+    }
 
     const hardGradeLoad =
       dummyProblems *
@@ -153,17 +227,25 @@ function App() {
       dummyProblems,
       dummyDuration,
       dummySleep,
-      prevEwma,
-      windowDays,
-      alpha,
+      prevAcuteEwma,
+      prevChronicEwma,
+      acuteWindow,
+      chronicWindow,
+      acuteAlpha,
+      chronicAlpha,
       baselineGrade,
       baselineSpeed,
       baselineRecovery,
       baselineLoad,
-      nextEwma,
+      nextAcuteEwma,
+      nextChronicEwma,
+      nextAcwr,
       hardGradeLoad,
       fasterPaceLoad,
       poorSleepLoad,
+      hardGradeAcwr: projectAcwr(hardGradeLoad),
+      fasterPaceAcwr: projectAcwr(fasterPaceLoad),
+      poorSleepAcwr: projectAcwr(poorSleepLoad),
     };
   }, [settings]);
 
@@ -374,7 +456,7 @@ function App() {
       <header className="hero-header">
         <div>
           <p className="eyebrow">Boulder Load Manager</p>
-          <h1>EWMA Load Tracking</h1>
+          <h1>ACWR + EWMA Load Tracking</h1>
           <p>
             Capacity range suggestion for max {settings.climberMaxGrade}: V
             {capacityRange.min.toFixed(1)} to V{capacityRange.max.toFixed(1)}
@@ -390,8 +472,8 @@ function App() {
             <strong>{totalProblems} problems</strong>
           </article>
           <article>
-            <span>EWMA Types</span>
-            <strong>{Object.keys(ewmaSnapshots).length}</strong>
+            <span>Avg ACWR</span>
+            <strong>{acwrSummary.avgAcwr.toFixed(2)}</strong>
           </article>
         </div>
       </header>
@@ -588,29 +670,31 @@ function App() {
       {tab === "dashboard" && (
         <section className="panel-grid">
           <article className="panel full-width">
-            <h2>EWMA by Boulder Type (Hold x Angle)</h2>
-            {Object.values(ewmaSnapshots).length === 0 && <p>Save a session to generate EWMA values.</p>}
-            {Object.values(ewmaSnapshots).length > 0 && (
+            <h2>ACWR by Boulder Type (Main Metric)</h2>
+            <p>
+              Acute window: {settings.model.acwr.acuteWindow} | Chronic window: {settings.model.acwr.chronicWindow}
+              {" "}| Goldilocks: {settings.model.acwr.lowThreshold.toFixed(2)} to {settings.model.acwr.highThreshold.toFixed(2)}
+            </p>
+            {acwrRows.length === 0 && <p>Save a session to generate ACWR values.</p>}
+            {acwrRows.length > 0 && (
               <table>
                 <thead>
                   <tr>
                     <th>Boulder type</th>
-                    <th>EWMA 10</th>
-                    <th>EWMA 15</th>
-                    <th>EWMA 20</th>
-                    <th>EWMA 25</th>
+                    <th>Acute EWMA</th>
+                    <th>Chronic EWMA</th>
+                    <th>ACWR</th>
+                    <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {Object.values(ewmaSnapshots)
-                    .sort((a, b) => a.key.localeCompare(b.key))
-                    .map((snapshot) => (
-                      <tr key={snapshot.key}>
-                        <td>{snapshot.key.replace("__", " + ")}</td>
-                        <td>{snapshot.ewma10.toFixed(2)}</td>
-                        <td>{snapshot.ewma15.toFixed(2)}</td>
-                        <td>{snapshot.ewma20.toFixed(2)}</td>
-                        <td>{snapshot.ewma25.toFixed(2)}</td>
+                  {acwrRows.map((row) => (
+                      <tr key={row.key}>
+                        <td>{row.key.replace("__", " + ")}</td>
+                        <td>{row.acute.toFixed(2)}</td>
+                        <td>{row.chronic.toFixed(2)}</td>
+                        <td>{row.acwr.toFixed(2)}</td>
+                        <td>{row.zone}</td>
                       </tr>
                     ))}
                 </tbody>
@@ -738,6 +822,66 @@ function App() {
                 />
               </label>
               <label>
+                ACWR acute window
+                <select
+                  value={settings.model.acwr.acuteWindow}
+                  onChange={(event) =>
+                    patchSettings((next) => {
+                      next.model.acwr.acuteWindow = Number(event.target.value) as EWMADays;
+                    })
+                  }
+                >
+                  {[10, 15, 20, 25].map((windowValue) => (
+                    <option key={`acute-${windowValue}`} value={windowValue}>
+                      {windowValue}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                ACWR chronic window
+                <select
+                  value={settings.model.acwr.chronicWindow}
+                  onChange={(event) =>
+                    patchSettings((next) => {
+                      next.model.acwr.chronicWindow = Number(event.target.value) as EWMADays;
+                    })
+                  }
+                >
+                  {[10, 15, 20, 25].map((windowValue) => (
+                    <option key={`chronic-${windowValue}`} value={windowValue}>
+                      {windowValue}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                ACWR low threshold
+                <input
+                  type="number"
+                  step={0.05}
+                  value={settings.model.acwr.lowThreshold}
+                  onChange={(event) =>
+                    patchSettings((next) => {
+                      next.model.acwr.lowThreshold = Number(event.target.value);
+                    })
+                  }
+                />
+              </label>
+              <label>
+                ACWR high threshold
+                <input
+                  type="number"
+                  step={0.05}
+                  value={settings.model.acwr.highThreshold}
+                  onChange={(event) =>
+                    patchSettings((next) => {
+                      next.model.acwr.highThreshold = Number(event.target.value);
+                    })
+                  }
+                />
+              </label>
+              <label>
                 Sleep max hours
                 <input
                   type="number"
@@ -820,51 +964,50 @@ function App() {
               </button>
             </div>
 
-            <h3>EWMA Math Demo</h3>
+            <h3>ACWR Math Demo</h3>
             <p>
-              Dummy session: {ewmaExample.dummyProblems} problems, {ewmaExample.dummyDuration} min, {" "}
-              {ewmaExample.dummySleep.toFixed(1)}h sleep, with previous EWMA {ewmaExample.prevEwma.toFixed(1)}.
+              Dummy session: {acwrExample.dummyProblems} problems, {acwrExample.dummyDuration} min, {" "}
+              {acwrExample.dummySleep.toFixed(1)}h sleep.
             </p>
             <p>
               Base load = problems x gradeIntensity x speedMultiplier x recoveryMultiplier
             </p>
             <p>
-              Base load = {ewmaExample.dummyProblems} x {ewmaExample.baselineGrade.toFixed(3)} x {" "}
-              {ewmaExample.baselineSpeed.toFixed(3)} x {ewmaExample.baselineRecovery.toFixed(3)} = {" "}
-              {ewmaExample.baselineLoad.toFixed(2)}
+              Base load = {acwrExample.dummyProblems} x {acwrExample.baselineGrade.toFixed(3)} x {" "}
+              {acwrExample.baselineSpeed.toFixed(3)} x {acwrExample.baselineRecovery.toFixed(3)} = {" "}
+              {acwrExample.baselineLoad.toFixed(2)}
             </p>
             <p>
-              EWMA update (window {ewmaExample.windowDays}): next = alpha x load + (1 - alpha) x previous
+              Acute EWMA ({acwrExample.acuteWindow}) = alphaA x load + (1 - alphaA) x prevAcute
             </p>
             <p>
-              alpha = 2 / ({ewmaExample.windowDays} + 1) = {ewmaExample.alpha.toFixed(3)}
+              Chronic EWMA ({acwrExample.chronicWindow}) = alphaC x load + (1 - alphaC) x prevChronic
             </p>
             <p>
-              next = {ewmaExample.alpha.toFixed(3)} x {ewmaExample.baselineLoad.toFixed(2)} + {" "}
-              {(1 - ewmaExample.alpha).toFixed(3)} x {ewmaExample.prevEwma.toFixed(1)} = {" "}
-              {ewmaExample.nextEwma.toFixed(2)}
+              ACWR = Acute EWMA / Chronic EWMA = {acwrExample.nextAcuteEwma.toFixed(2)} / {" "}
+              {acwrExample.nextChronicEwma.toFixed(2)} = {acwrExample.nextAcwr.toFixed(2)}
             </p>
 
             <div className="example-grid">
               <article className="math-card">
                 <h4>Grade harder (V6 to V9)</h4>
-                <p>Load changes to {ewmaExample.hardGradeLoad.toFixed(2)}</p>
+                <p>Load changes to {acwrExample.hardGradeLoad.toFixed(2)}</p>
                 <p>
-                  Delta: {(ewmaExample.hardGradeLoad - ewmaExample.baselineLoad).toFixed(2)}
+                  ACWR: {acwrExample.hardGradeAcwr.toFixed(2)}
                 </p>
               </article>
               <article className="math-card">
                 <h4>Climb faster (120 to 75 min)</h4>
-                <p>Load changes to {ewmaExample.fasterPaceLoad.toFixed(2)}</p>
+                <p>Load changes to {acwrExample.fasterPaceLoad.toFixed(2)}</p>
                 <p>
-                  Delta: {(ewmaExample.fasterPaceLoad - ewmaExample.baselineLoad).toFixed(2)}
+                  ACWR: {acwrExample.fasterPaceAcwr.toFixed(2)}
                 </p>
               </article>
               <article className="math-card">
                 <h4>Sleep less (7.5h to 6.0h)</h4>
-                <p>Load changes to {ewmaExample.poorSleepLoad.toFixed(2)}</p>
+                <p>Load changes to {acwrExample.poorSleepLoad.toFixed(2)}</p>
                 <p>
-                  Delta: {(ewmaExample.poorSleepLoad - ewmaExample.baselineLoad).toFixed(2)}
+                  ACWR: {acwrExample.poorSleepAcwr.toFixed(2)}
                 </p>
               </article>
             </div>
