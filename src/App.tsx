@@ -1322,7 +1322,8 @@ function App() {
               <table>
                 <thead>
                   <tr>
-                    <th>Date</th>
+                    <th>Entry Date</th>
+                    <th>Climbing Date</th>
                     <th>Problems</th>
                     <th>Duration</th>
                     <th>Sleep</th>
@@ -1334,9 +1335,20 @@ function App() {
                 <tbody>
                   {sessions.map((session) => {
                     const count = session.problems.reduce((sum, problem) => sum + problem.count, 0);
+                    const climbingDates = Array.from(
+                      new Set(session.problems.map((problem) => problem.climbedOn).filter(Boolean)),
+                    ) as string[];
+                    const climbingDateLabel =
+                      climbingDates.length === 0
+                        ? "-"
+                        : climbingDates.length === 1
+                          ? climbingDates[0]
+                          : `${climbingDates[0]} to ${climbingDates[climbingDates.length - 1]}`;
+
                     return (
                       <tr key={session.id}>
                         <td>{new Date(session.createdAt).toLocaleString()}</td>
+                        <td>{climbingDateLabel}</td>
                         <td>{count}</td>
                         <td>{session.durationMinutes} min</td>
                         <td>{session.sleepHours.toFixed(1)} h</td>
