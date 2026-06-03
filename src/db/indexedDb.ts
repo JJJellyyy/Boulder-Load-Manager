@@ -93,3 +93,11 @@ export async function loadEwmaSnapshots(): Promise<EWMASnapshot[]> {
 export async function saveEwmaSnapshot(snapshot: EWMASnapshot): Promise<void> {
   await runTransaction<IDBValidKey>(STORE_EWMA, "readwrite", (store) => store.put(snapshot));
 }
+
+export async function clearSessions(): Promise<void> {
+  await runTransaction<undefined>(STORE_SESSIONS, "readwrite", (store) => store.clear());
+}
+
+export async function clearEwmaSnapshots(): Promise<void> {
+  await runTransaction<undefined>(STORE_EWMA, "readwrite", (store) => store.clear());
+}

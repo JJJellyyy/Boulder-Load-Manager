@@ -63,6 +63,47 @@ Why this is a good fit:
 
 When Google Drive sync is added, register production and preview OAuth redirect URLs in Google Cloud.
 
+## Google Drive OAuth Setup (Vercel + Google Cloud)
+
+This app now includes Google Drive backup/restore in the Settings tab.
+
+### 1) Create OAuth Client In Google Cloud
+
+1. Open Google Cloud Console.
+2. APIs & Services -> Credentials -> Create Credentials -> OAuth client ID.
+3. Application type: Web application.
+4. Add Authorized JavaScript origins:
+  - https://boulder-load-manager.vercel.app
+  - Your branch preview URL origin from Vercel (for example your stable main-branch preview domain)
+  - http://localhost:5173
+5. Add Authorized redirect URI entries:
+  - https://boulder-load-manager.vercel.app
+  - Your preview deployment URL
+  - http://localhost:5173
+
+Note: Vercel generates many preview URLs. Keep one stable preview URL for OAuth testing, or test Drive sync on production only.
+
+### 2) Add Client ID To Vercel
+
+1. Vercel Project -> Settings -> Environment Variables.
+2. Add variable: `VITE_GOOGLE_CLIENT_ID`.
+3. Value: your OAuth Client ID from Google Cloud.
+4. Set for Production and Preview.
+5. Redeploy.
+
+### 3) Add Client ID Locally
+
+1. Create `.env.local` from `.env.example`.
+2. Set `VITE_GOOGLE_CLIENT_ID=...`.
+3. Run `npm run dev`.
+
+### 4) Test Flow
+
+1. Open Settings -> Google Drive Sync.
+2. Click Connect Google Drive.
+3. Click Upload Backup.
+4. Click Restore Backup.
+
 ## Core Files
 
 - `src/App.tsx` - Main UI and save flow.

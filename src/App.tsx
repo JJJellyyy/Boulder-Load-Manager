@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import {
+  clearEwmaSnapshots,
+  clearSessions,
   loadEwmaSnapshots,
   loadSessions,
   loadSettings,
@@ -16,10 +18,16 @@ import {
   suggestedCapacityRange,
 } from "./domain/loadCalculator";
 import {
+  authorizeGoogleDrive,
+  downloadBackupFromGoogleDrive,
+  uploadBackupToGoogleDrive,
+} from "./integrations/googleDrive";
+import {
   GRADES,
   HOLD_TYPES,
   WALL_ANGLES,
   type AppSettings,
+  type DriveBackupPayload,
   type EWMASnapshot,
   type Grade,
   type HoldType,
@@ -63,11 +71,14 @@ function App() {
   const [ewmaSnapshots, setEwmaSnapshots] = useState<Record<string, EWMASnapshot>>({});
   const [draft, setDraft] = useState<SessionDraft>(createSessionDraft(DEFAULT_SETTINGS));
   const [loading, setLoading] = useState(true);
+  const [driveToken, setDriveToken] = useState<string | undefined>();
+  const [driveStatus, setDriveStatus] = useState<string>("Google Drive not connected.");
 
   const [entryCount, setEntryCount] = useState(1);
   const [entryGrade, setEntryGrade] = useState<Grade>("V4");
   const [entryHold, setEntryHold] = useState<HoldType>("mixed");
   const [entryAngle, setEntryAngle] = useState<WallAngle>("vert");
+  const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
   const totalProblems = useMemo(
     () => draft.problems.reduce((sum, problem) => sum + problem.count, 0),
@@ -159,6 +170,91 @@ function App() {
       update(next);
       return clampSettings(next);
     });
+  }
+
+  function getBackupPayload(): DriveBackupPayload {
+    return {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      settings,
+      sessions,
+      ewmaSnapshots: Object.values(ewmaSnapshots),
+    };
+  }
+
+  async function connectGoogleDrive(): Promise<string | undefined> {
+    if (!googleClientId) {
+      setDriveStatus("Missing VITE_GOOGLE_CLIENT_ID. Configure it in Vercel and .env.local.");
+      return undefined;
+    }
+
+    try {
+      const token = await authorizeGoogleDrive(googleClientId);
+      setDriveToken(token);
+      setDriveStatus("Google Drive connected.");
+      return token;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Google Drive connection failed.";
+      setDriveStatus(message);
+      return undefined;
+    }
+  }
+
+  async function handleDriveUpload(): Promise<void> {
+    const token = driveToken ?? (await connectGoogleDrive());
+    if (!token) {
+      return;
+    }
+
+    try {
+      await uploadBackupToGoogleDrive(token, getBackupPayload());
+      setDriveStatus("Backup uploaded to Google Drive.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Upload failed.";
+      setDriveStatus(message);
+      setDriveToken(undefined);
+    }
+  }
+
+  async function handleDriveRestore(): Promise<void> {
+    const token = driveToken ?? (await connectGoogleDrive());
+    if (!token) {
+      return;
+    }
+
+    try {
+      const payload = await downloadBackupFromGoogleDrive(token);
+      await clearSessions();
+      await clearEwmaSnapshots();
+
+      const restoredSettings = clampSettings(payload.settings ?? DEFAULT_SETTINGS);
+      await saveSettings(restoredSettings);
+
+      for (const restoredSession of payload.sessions) {
+        await saveSession(restoredSession);
+      }
+
+      for (const snapshot of payload.ewmaSnapshots ?? []) {
+        await saveEwmaSnapshot(snapshot);
+      }
+
+      const sessionsFromDb = await loadSessions();
+      const snapshotsFromDb = await loadEwmaSnapshots();
+      const mappedSnapshots = snapshotsFromDb.reduce<Record<string, EWMASnapshot>>((acc, snapshot) => {
+        acc[snapshot.key] = snapshot;
+        return acc;
+      }, {});
+
+      setSettings(restoredSettings);
+      setSessions(sessionsFromDb);
+      setEwmaSnapshots(mappedSnapshots);
+      setDraft(createSessionDraft(restoredSettings));
+      setDriveStatus("Backup restored from Google Drive.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Restore failed.";
+      setDriveStatus(message);
+      setDriveToken(undefined);
+    }
   }
 
   async function saveCurrentSession(): Promise<void> {
@@ -637,6 +733,23 @@ function App() {
             <button type="button" onClick={() => setSettings(DEFAULT_SETTINGS)}>
               Reset defaults
             </button>
+
+            <h3>Google Drive Sync</h3>
+            <p>{driveStatus}</p>
+            <p>
+              Current origin: <strong>{window.location.origin}</strong>
+            </p>
+            <div className="metric-row">
+              <button type="button" onClick={() => void connectGoogleDrive()}>
+                Connect Google Drive
+              </button>
+              <button type="button" onClick={() => void handleDriveUpload()}>
+                Upload Backup
+              </button>
+              <button type="button" onClick={() => void handleDriveRestore()}>
+                Restore Backup
+              </button>
+            </div>
           </article>
         </section>
       )}

@@ -107,3 +107,11 @@ export interface CalculationResult {
   recoveryMultiplier: number;
   byBoulderType: BoulderTypeLoad[];
 }
+
+export interface DriveBackupPayload {
+  version: number;
+  exportedAt: string;
+  settings: AppSettings;
+  sessions: SessionInput[];
+  ewmaSnapshots: EWMASnapshot[];
+}
