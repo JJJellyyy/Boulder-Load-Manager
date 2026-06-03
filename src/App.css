@@ -4,6 +4,23 @@
   padding: 2rem 1rem 3rem;
 }
 
+.bootstrap-warning {
+  background: #fff8e1;
+  border: 1px solid #f5b400;
+  border-radius: 8px;
+  padding: 0.55rem 0.85rem;
+  font-size: 0.9rem;
+  color: #7a5800;
+  margin: 0.5rem 0;
+}
+
+.log-badge {
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: #666;
+  margin-left: 4px;
+}
+
 .hero-header {
   border: 1px solid var(--border);
   border-radius: 20px;

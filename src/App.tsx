@@ -120,6 +120,7 @@ interface CurveChartProps {
   stroke: string;
   xFormatter?: (value: number) => string;
   yFormatter?: (value: number) => string;
+  yLogarithmic?: boolean;
 }
 
 function CurveChart({
@@ -130,6 +131,7 @@ function CurveChart({
   stroke,
   xFormatter = (value) => value.toFixed(2),
   yFormatter = (value) => value.toFixed(2),
+  yLogarithmic = false,
 }: CurveChartProps) {
   const width = 320;
   const height = 180;
@@ -144,25 +146,30 @@ function CurveChart({
     );
   }
 
+  const transformY = (v: number) => (yLogarithmic ? Math.log(Math.max(v, 0.001)) : v);
+
   const minX = Math.min(...points.map((point) => point.x));
   const maxX = Math.max(...points.map((point) => point.x));
+  const minYT = Math.min(...points.map((point) => transformY(point.y)));
+  const maxYT = Math.max(...points.map((point) => transformY(point.y)));
   const minY = Math.min(...points.map((point) => point.y));
   const maxY = Math.max(...points.map((point) => point.y));
 
   const spanX = Math.max(0.0001, maxX - minX);
-  const spanY = Math.max(0.0001, maxY - minY);
+  const spanYT = Math.max(0.0001, maxYT - minYT);
 
   const polyline = points
     .map((point) => {
       const x = pad + ((point.x - minX) / spanX) * (width - pad * 2);
-      const y = height - pad - ((point.y - minY) / spanY) * (height - pad * 2);
+      const yt = transformY(point.y);
+      const y = height - pad - ((yt - minYT) / spanYT) * (height - pad * 2);
       return `${x},${y}`;
     })
     .join(" ");
 
   return (
     <article className="curve-card">
-      <h4>{title}</h4>
+      <h4>{title}{yLogarithmic && <span className="log-badge"> (log scale)</span>}</h4>
       <svg className="curve-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={title}>
         <line x1={pad} y1={height - pad} x2={width - pad} y2={height - pad} className="curve-axis" />
         <line x1={pad} y1={pad} x2={pad} y2={height - pad} className="curve-axis" />
@@ -517,7 +524,34 @@ function App() {
     const ordered = [...sessionsToReplay].sort(
       (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
     );
+
+    // Bootstrap: seed EWMA with session average when fewer sessions than longest window
+    const maxWindow = Math.max(...settingsForCalc.model.ewmaWindows);
+    const sumByKey: Record<string, number> = {};
+    const countByKey: Record<string, number> = {};
+    for (const sessionItem of ordered) {
+      const sessionCalc = calculateSessionLoad(sessionItem, settingsForCalc);
+      for (const entry of sessionCalc.byBoulderType) {
+        sumByKey[entry.key] = (sumByKey[entry.key] ?? 0) + entry.adjustedLoad;
+        countByKey[entry.key] = (countByKey[entry.key] ?? 0) + 1;
+      }
+    }
+
     const nextSnapshots: Record<string, EWMASnapshot> = {};
+
+    if (ordered.length < maxWindow && ordered.length > 0) {
+      for (const key of Object.keys(sumByKey)) {
+        const avg = sumByKey[key] / countByKey[key];
+        nextSnapshots[key] = {
+          key,
+          ewma10: avg,
+          ewma15: avg,
+          ewma20: avg,
+          ewma25: avg,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+    }
 
     for (const sessionItem of ordered) {
       const sessionCalc = calculateSessionLoad(sessionItem, settingsForCalc);
@@ -710,7 +744,7 @@ function App() {
           {googleProfile ? (
             <div className="profile-chip">
               {googleProfile.picture ? (
-                <img src={googleProfile.picture} alt={googleProfile.name} className="profile-avatar" />
+                <img src={googleProfile.picture} alt={googleProfile.name} className="profile-avatar" referrerPolicy="no-referrer" crossOrigin="anonymous" />
               ) : (
                 <div className="profile-avatar-fallback">{googleProfile.name.slice(0, 1).toUpperCase()}</div>
               )}
@@ -960,6 +994,11 @@ function App() {
               Acute window: {settings.model.acwr.acuteWindow} | Chronic window: {settings.model.acwr.chronicWindow}
               {" "}| Goldilocks: {settings.model.acwr.lowThreshold.toFixed(2)} to {settings.model.acwr.highThreshold.toFixed(2)}
             </p>
+            {sessions.length > 0 && sessions.length < Math.max(...settings.model.ewmaWindows) && (
+              <p className="bootstrap-warning">
+                ⚠ EWMA is still stabilising — using session average as seed ({sessions.length}/{Math.max(...settings.model.ewmaWindows)} sessions logged). Values will become more accurate as you log more sessions.
+              </p>
+            )}
             {acwrRows.length === 0 && <p>Save a session to generate ACWR values.</p>}
             {acwrRows.length > 0 && (
               <table>
@@ -1207,8 +1246,8 @@ function App() {
                 />
               </label>
             </div>
-            <button type="button" onClick={() => setSettings(DEFAULT_SETTINGS)}>
-              Reset defaults
+            <button type="button" className="danger" onClick={() => setSettings(DEFAULT_SETTINGS)}>
+              ↺ Revert All Settings To Default
             </button>
 
             <h3>Google Drive Sync</h3>
@@ -1265,6 +1304,7 @@ function App() {
                 stroke="#0f7f88"
                 xFormatter={(value) => gradeToDisplay(gradeFromNumber(value), settings.gradeDisplayUnit)}
                 yFormatter={(value) => value.toFixed(2)}
+                yLogarithmic
               />
               <CurveChart
                 title="Speed Multiplier Curve"
