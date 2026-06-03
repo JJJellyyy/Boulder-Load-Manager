@@ -181,6 +181,8 @@ function App() {
   const [sessions, setSessions] = useState<SessionInput[]>([]);
   const [ewmaSnapshots, setEwmaSnapshots] = useState<Record<string, EWMASnapshot>>({});
   const [draft, setDraft] = useState<SessionDraft>(createSessionDraft(DEFAULT_SETTINGS));
+  const [editingSessionId, setEditingSessionId] = useState<string | undefined>();
+  const [editingSessionCreatedAt, setEditingSessionCreatedAt] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
   const [driveSession, setDriveSession] = useState<GoogleAuthSession | undefined>();
   const [googleProfile, setGoogleProfile] = useState<GoogleProfile | undefined>();
@@ -424,7 +426,20 @@ function App() {
           setGoogleProfile(profile);
           setDriveStatus(`Google Drive connected as ${profile.email}.`);
         } catch {
-          storeDriveSession(undefined);
+          if (googleClientId) {
+            try {
+              const refreshedSession = await authorizeGoogleDrive(googleClientId, "");
+              const refreshedProfile = await fetchGoogleProfile(refreshedSession.accessToken);
+              setDriveSession(refreshedSession);
+              setGoogleProfile(refreshedProfile);
+              setDriveStatus(`Google Drive connected as ${refreshedProfile.email}.`);
+              storeDriveSession(refreshedSession);
+            } catch {
+              storeDriveSession(undefined);
+            }
+          } else {
+            storeDriveSession(undefined);
+          }
         }
       }
 
@@ -472,6 +487,53 @@ function App() {
       update(next);
       return clampSettings(next);
     });
+  }
+
+  function beginEditSession(session: SessionInput): void {
+    setEditingSessionId(session.id);
+    setEditingSessionCreatedAt(session.createdAt);
+    setDraft({
+      durationMinutes: session.durationMinutes,
+      sleepHours: session.sleepHours,
+      stress: session.stress,
+      motivation: session.motivation,
+      problems: session.problems.map((problem) => ({ ...problem })),
+    });
+    setEntryDate(session.problems[0]?.climbedOn ?? todayIsoDate());
+    setTab("session");
+  }
+
+  function cancelEditSession(): void {
+    setEditingSessionId(undefined);
+    setEditingSessionCreatedAt(undefined);
+    setDraft(createSessionDraft(settings));
+  }
+
+  async function recomputeAndPersistSnapshots(
+    sessionsToReplay: SessionInput[],
+    settingsForCalc: AppSettings,
+  ): Promise<Record<string, EWMASnapshot>> {
+    await clearEwmaSnapshots();
+    const ordered = [...sessionsToReplay].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    );
+    const nextSnapshots: Record<string, EWMASnapshot> = {};
+
+    for (const sessionItem of ordered) {
+      const sessionCalc = calculateSessionLoad(sessionItem, settingsForCalc);
+      for (const entry of sessionCalc.byBoulderType) {
+        const updated = updateSnapshot(
+          nextSnapshots[entry.key],
+          entry.key,
+          entry.adjustedLoad,
+          settingsForCalc.model.ewmaWindows,
+        );
+        nextSnapshots[entry.key] = updated;
+      }
+    }
+
+    await Promise.all(Object.values(nextSnapshots).map((snapshot) => saveEwmaSnapshot(snapshot)));
+    return nextSnapshots;
   }
 
   function getBackupPayload(): DriveBackupPayload {
@@ -593,25 +655,17 @@ function App() {
       return;
     }
 
+    const isEditing = Boolean(editingSessionId);
+
     const session: SessionInput = {
-      id: getId(),
-      createdAt: new Date().toISOString(),
+      id: editingSessionId ?? getId(),
+      createdAt: editingSessionCreatedAt ?? new Date().toISOString(),
       durationMinutes: draft.durationMinutes,
       sleepHours: draft.sleepHours,
       stress: draft.stress,
       motivation: draft.motivation,
       problems: draft.problems,
     };
-
-    const calculation = calculateSessionLoad(session, settings);
-    const nextSnapshots = { ...ewmaSnapshots };
-
-    const saveSnapshotJobs = calculation.byBoulderType.map(async (entry) => {
-      const previous = nextSnapshots[entry.key];
-      const updated = updateSnapshot(previous, entry.key, entry.adjustedLoad, settings.model.ewmaWindows);
-      nextSnapshots[entry.key] = updated;
-      await saveEwmaSnapshot(updated);
-    });
 
     const highestLoggedGrade = session.problems.reduce((max, item) => {
       const score = gradeToNumber(item.grade);
@@ -626,10 +680,18 @@ function App() {
       await saveSettings(nextSettings);
     }
 
-    await Promise.all([...saveSnapshotJobs, saveSession(session)]);
-    setEwmaSnapshots(nextSnapshots);
-    setSessions((previous) => [session, ...previous]);
+    const updatedSessions = isEditing
+      ? sessions.map((item) => (item.id === session.id ? session : item))
+      : [session, ...sessions];
+
+    await saveSession(session);
+    const recalculatedSnapshots = await recomputeAndPersistSnapshots(updatedSessions, nextSettings);
+
+    setEwmaSnapshots(recalculatedSnapshots);
+    setSessions(updatedSessions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
     setDraft(createSessionDraft(nextSettings));
+    setEditingSessionId(undefined);
+    setEditingSessionCreatedAt(undefined);
     setTab("dashboard");
   }
 
@@ -767,6 +829,11 @@ function App() {
 
           <article className="panel">
             <h2>Session Context</h2>
+            {editingSessionId && (
+              <p>
+                Editing existing session. Save will update the same history entry and recalculate ACWR/EWMA.
+              </p>
+            )}
             <div className="field-grid">
               <label>
                 Duration (minutes)
@@ -832,9 +899,16 @@ function App() {
               </div>
             )}
 
-            <button type="button" onClick={() => void saveCurrentSession()} disabled={draft.problems.length === 0}>
-              Save Session And Update EWMA
-            </button>
+            <div className="metric-row">
+              <button type="button" onClick={() => void saveCurrentSession()} disabled={draft.problems.length === 0}>
+                {editingSessionId ? "Update Session And Recalculate" : "Save Session And Update EWMA"}
+              </button>
+              {editingSessionId && (
+                <button type="button" onClick={cancelEditSession}>
+                  Cancel Edit
+                </button>
+              )}
+            </div>
           </article>
 
           <article className="panel full-width">
@@ -1254,6 +1328,7 @@ function App() {
                     <th>Sleep</th>
                     <th>Stress</th>
                     <th>Motivation</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1267,6 +1342,11 @@ function App() {
                         <td>{session.sleepHours.toFixed(1)} h</td>
                         <td>{session.stress}</td>
                         <td>{session.motivation}</td>
+                        <td>
+                          <button type="button" onClick={() => beginEditSession(session)}>
+                            Edit
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
