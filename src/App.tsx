@@ -24,6 +24,9 @@ import {
 import {
   authorizeGoogleDrive,
   downloadBackupFromGoogleDrive,
+  fetchGoogleProfile,
+  type GoogleAuthSession,
+  type GoogleProfile,
   uploadBackupToGoogleDrive,
 } from "./integrations/googleDrive";
 import {
@@ -73,6 +76,8 @@ function getId(): string {
 function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
+
+const GOOGLE_SESSION_STORAGE_KEY = "blm_google_session";
 
 function getEwmaValue(snapshot: EWMASnapshot, windowDays: EWMADays): number {
   if (windowDays === 10) {
@@ -177,7 +182,8 @@ function App() {
   const [ewmaSnapshots, setEwmaSnapshots] = useState<Record<string, EWMASnapshot>>({});
   const [draft, setDraft] = useState<SessionDraft>(createSessionDraft(DEFAULT_SETTINGS));
   const [loading, setLoading] = useState(true);
-  const [driveToken, setDriveToken] = useState<string | undefined>();
+  const [driveSession, setDriveSession] = useState<GoogleAuthSession | undefined>();
+  const [googleProfile, setGoogleProfile] = useState<GoogleProfile | undefined>();
   const [driveStatus, setDriveStatus] = useState<string>("Google Drive not connected.");
 
   const [entryCount, setEntryCount] = useState(1);
@@ -186,6 +192,37 @@ function App() {
   const [entryAngle, setEntryAngle] = useState<WallAngle>("vert");
   const [entryDate, setEntryDate] = useState<string>(todayIsoDate());
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+
+  function storeDriveSession(session: GoogleAuthSession | undefined): void {
+    if (!session) {
+      localStorage.removeItem(GOOGLE_SESSION_STORAGE_KEY);
+      return;
+    }
+
+    localStorage.setItem(GOOGLE_SESSION_STORAGE_KEY, JSON.stringify(session));
+  }
+
+  function readStoredDriveSession(): GoogleAuthSession | undefined {
+    const raw = localStorage.getItem(GOOGLE_SESSION_STORAGE_KEY);
+    if (!raw) {
+      return undefined;
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as GoogleAuthSession;
+      if (!parsed.accessToken || !parsed.expiresAt) {
+        return undefined;
+      }
+
+      if (Date.now() > parsed.expiresAt - 15_000) {
+        return undefined;
+      }
+
+      return parsed;
+    } catch {
+      return undefined;
+    }
+  }
 
   const totalProblems = useMemo(
     () => draft.problems.reduce((sum, problem) => sum + problem.count, 0),
@@ -378,6 +415,19 @@ function App() {
         return acc;
       }, {});
       setEwmaSnapshots(mapped);
+
+      const existingDriveSession = readStoredDriveSession();
+      if (existingDriveSession) {
+        try {
+          const profile = await fetchGoogleProfile(existingDriveSession.accessToken);
+          setDriveSession(existingDriveSession);
+          setGoogleProfile(profile);
+          setDriveStatus(`Google Drive connected as ${profile.email}.`);
+        } catch {
+          storeDriveSession(undefined);
+        }
+      }
+
       setLoading(false);
     }
 
@@ -441,10 +491,13 @@ function App() {
     }
 
     try {
-      const token = await authorizeGoogleDrive(googleClientId);
-      setDriveToken(token);
-      setDriveStatus("Google Drive connected.");
-      return token;
+      const session = await authorizeGoogleDrive(googleClientId, "consent");
+      const profile = await fetchGoogleProfile(session.accessToken);
+      setDriveSession(session);
+      setGoogleProfile(profile);
+      setDriveStatus(`Google Drive connected as ${profile.email}.`);
+      storeDriveSession(session);
+      return session.accessToken;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Google Drive connection failed.";
       setDriveStatus(message);
@@ -452,8 +505,36 @@ function App() {
     }
   }
 
+  function disconnectGoogleDrive(): void {
+    setDriveSession(undefined);
+    setGoogleProfile(undefined);
+    storeDriveSession(undefined);
+    setDriveStatus("Google Drive disconnected.");
+  }
+
+  async function ensureDriveAccessToken(): Promise<string | undefined> {
+    if (driveSession && Date.now() < driveSession.expiresAt - 15_000) {
+      return driveSession.accessToken;
+    }
+
+    if (googleClientId) {
+      try {
+        const silentSession = await authorizeGoogleDrive(googleClientId, "");
+        const profile = googleProfile ?? (await fetchGoogleProfile(silentSession.accessToken));
+        setDriveSession(silentSession);
+        setGoogleProfile(profile);
+        storeDriveSession(silentSession);
+        return silentSession.accessToken;
+      } catch {
+        return connectGoogleDrive();
+      }
+    }
+
+    return undefined;
+  }
+
   async function handleDriveUpload(): Promise<void> {
-    const token = driveToken ?? (await connectGoogleDrive());
+    const token = await ensureDriveAccessToken();
     if (!token) {
       return;
     }
@@ -464,12 +545,11 @@ function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Upload failed.";
       setDriveStatus(message);
-      setDriveToken(undefined);
     }
   }
 
   async function handleDriveRestore(): Promise<void> {
-    const token = driveToken ?? (await connectGoogleDrive());
+    const token = await ensureDriveAccessToken();
     if (!token) {
       return;
     }
@@ -505,7 +585,6 @@ function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Restore failed.";
       setDriveStatus(message);
-      setDriveToken(undefined);
     }
   }
 
@@ -565,6 +644,26 @@ function App() {
   return (
     <main className="app-shell">
       <header className="hero-header">
+        <div className="hero-top-row">
+          {googleProfile ? (
+            <div className="profile-chip">
+              {googleProfile.picture ? (
+                <img src={googleProfile.picture} alt={googleProfile.name} className="profile-avatar" />
+              ) : (
+                <div className="profile-avatar-fallback">{googleProfile.name.slice(0, 1).toUpperCase()}</div>
+              )}
+              <div>
+                <p className="profile-name">{googleProfile.name}</p>
+                <p className="profile-email">{googleProfile.email}</p>
+              </div>
+              <button type="button" onClick={disconnectGoogleDrive}>Sign out</button>
+            </div>
+          ) : (
+            <button type="button" className="connect-top-btn" onClick={() => void connectGoogleDrive()}>
+              Sign in with Google
+            </button>
+          )}
+        </div>
         <div>
           <p className="eyebrow">Boulder Load Manager</p>
           <h1>ACWR + EWMA Load Tracking</h1>
@@ -1046,6 +1145,9 @@ function App() {
             <div className="metric-row">
               <button type="button" onClick={() => void connectGoogleDrive()}>
                 Connect Google Drive
+              </button>
+              <button type="button" onClick={disconnectGoogleDrive}>
+                Disconnect
               </button>
               <button type="button" onClick={() => void handleDriveUpload()}>
                 Upload Backup

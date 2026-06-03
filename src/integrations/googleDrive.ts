@@ -1,16 +1,34 @@
 import type { DriveBackupPayload } from "../types";
 
 const GOOGLE_IDENTITY_SCRIPT = "https://accounts.google.com/gsi/client";
-const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
+const DRIVE_SCOPE = [
+  "https://www.googleapis.com/auth/drive.appdata",
+  "openid",
+  "email",
+  "profile",
+].join(" ");
 const BACKUP_FILE_NAME = "boulder-load-manager-backup.json";
 
 interface TokenResponse {
   access_token: string;
+  expires_in?: number;
   error?: string;
 }
 
 interface TokenClient {
   requestAccessToken: (options?: { prompt?: string }) => void;
+}
+
+export interface GoogleAuthSession {
+  accessToken: string;
+  expiresAt: number;
+}
+
+export interface GoogleProfile {
+  sub: string;
+  email: string;
+  name: string;
+  picture?: string;
 }
 
 declare global {
@@ -64,7 +82,10 @@ function loadGoogleIdentityScript(): Promise<void> {
   return scriptPromise;
 }
 
-export async function authorizeGoogleDrive(clientId: string): Promise<string> {
+export async function authorizeGoogleDrive(
+  clientId: string,
+  prompt: "consent" | "" = "consent",
+): Promise<GoogleAuthSession> {
   if (!clientId) {
     throw new Error("Missing VITE_GOOGLE_CLIENT_ID. Add it in Vercel environment variables.");
   }
@@ -87,12 +108,29 @@ export async function authorizeGoogleDrive(clientId: string): Promise<string> {
           return;
         }
 
-        resolve(response.access_token);
+        resolve({
+          accessToken: response.access_token,
+          expiresAt: Date.now() + (response.expires_in ?? 3600) * 1000,
+        });
       },
     });
 
-    tokenClient.requestAccessToken({ prompt: "consent" });
+    tokenClient.requestAccessToken({ prompt });
   });
+}
+
+export async function fetchGoogleProfile(accessToken: string): Promise<GoogleProfile> {
+  const response = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch Google profile.");
+  }
+
+  return (await response.json()) as GoogleProfile;
 }
 
 interface DriveFile {

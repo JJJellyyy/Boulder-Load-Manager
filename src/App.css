@@ -15,6 +15,61 @@
     linear-gradient(150deg, rgba(255, 255, 255, 0.96), rgba(247, 251, 255, 0.9));
 }
 
+.hero-top-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.7rem;
+}
+
+.profile-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 0.35rem 0.45rem;
+}
+
+.profile-avatar,
+.profile-avatar-fallback {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+}
+
+.profile-avatar {
+  object-fit: cover;
+}
+
+.profile-avatar-fallback {
+  display: grid;
+  place-items: center;
+  background: #0f7f88;
+  color: white;
+  font-weight: 700;
+}
+
+.profile-name,
+.profile-email {
+  margin: 0;
+  line-height: 1.1;
+}
+
+.profile-name {
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.profile-email {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.connect-top-btn {
+  background: rgba(255, 255, 255, 0.92);
+}
+
 .eyebrow {
   text-transform: uppercase;
   letter-spacing: 0.12em;
@@ -212,5 +267,14 @@ td {
   .tab-nav {
     overflow-x: auto;
     padding-bottom: 0.25rem;
+  }
+
+  .hero-top-row {
+    justify-content: stretch;
+  }
+
+  .profile-chip {
+    width: 100%;
+    border-radius: 14px;
   }
 }
