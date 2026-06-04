@@ -600,7 +600,15 @@ function App() {
           const profile = await fetchGoogleProfile(existingDriveSession.accessToken);
           setDriveSession(existingDriveSession);
           setGoogleProfile(profile);
-          setDriveStatus(`Google Drive connected as ${profile.email}.`);
+
+          // Auto-restore if this device has no local sessions yet.
+          if (savedSessions.length === 0) {
+            setDriveStatus(`Signed in as ${profile.email}. Restoring backup…`);
+            await applyDriveBackup(existingDriveSession.accessToken);
+            setDriveStatus(`Backup restored. Signed in as ${profile.email}.`);
+          } else {
+            setDriveStatus(`Google Drive connected as ${profile.email}.`);
+          }
         } catch {
           if (googleClientId) {
             try {
@@ -608,8 +616,15 @@ function App() {
               const refreshedProfile = await fetchGoogleProfile(refreshedSession.accessToken);
               setDriveSession(refreshedSession);
               setGoogleProfile(refreshedProfile);
-              setDriveStatus(`Google Drive connected as ${refreshedProfile.email}.`);
               storeDriveSession(refreshedSession);
+
+              if (savedSessions.length === 0) {
+                setDriveStatus(`Signed in as ${refreshedProfile.email}. Restoring backup…`);
+                await applyDriveBackup(refreshedSession.accessToken);
+                setDriveStatus(`Backup restored. Signed in as ${refreshedProfile.email}.`);
+              } else {
+                setDriveStatus(`Google Drive connected as ${refreshedProfile.email}.`);
+              }
             } catch {
               storeDriveSession(undefined);
             }
@@ -868,6 +883,40 @@ function App() {
     };
   }
 
+  async function applyDriveBackup(token: string): Promise<void> {
+    try {
+      const payload = await downloadBackupFromGoogleDrive(token);
+      await clearSessions();
+      await clearEwmaSnapshots();
+      await clearStrengthTemplates();
+      await clearStrengthSessions();
+
+      const restoredSettings = clampSettings(payload.settings ?? DEFAULT_SETTINGS);
+      await saveSettings(restoredSettings);
+      for (const s of payload.sessions) { await saveSession(s); }
+      for (const snap of payload.ewmaSnapshots ?? []) { await saveEwmaSnapshot(snap); }
+      for (const t of payload.strengthTemplates ?? [DEFAULT_STRENGTH_TEMPLATE]) { await saveStrengthTemplate(t); }
+      for (const ss of payload.strengthSessions ?? []) { await saveStrengthSession(ss); }
+
+      const [sessionsFromDb, snapshotsFromDb, templatesFromDb, strengthSessionsFromDb] = await Promise.all([
+        loadSessions(), loadEwmaSnapshots(), loadStrengthTemplates(), loadStrengthSessions(),
+      ]);
+      const mappedSnapshots = snapshotsFromDb.reduce<Record<string, EWMASnapshot>>((acc, snap) => {
+        acc[snap.key] = snap;
+        return acc;
+      }, {});
+
+      setSettings(restoredSettings);
+      setSessions(sessionsFromDb);
+      setEwmaSnapshots(mappedSnapshots);
+      setStrengthTemplates(templatesFromDb.length > 0 ? templatesFromDb : [DEFAULT_STRENGTH_TEMPLATE]);
+      setStrengthSessions(strengthSessionsFromDb);
+      setDraft(createSessionDraft(restoredSettings));
+    } catch {
+      // No backup file yet — that's fine, just continue with local data.
+    }
+  }
+
   async function connectGoogleDrive(): Promise<string | undefined> {
     if (!googleClientId) {
       setDriveStatus("Missing VITE_GOOGLE_CLIENT_ID. Configure it in Vercel and .env.local.");
@@ -879,8 +928,18 @@ function App() {
       const profile = await fetchGoogleProfile(session.accessToken);
       setDriveSession(session);
       setGoogleProfile(profile);
-      setDriveStatus(`Google Drive connected as ${profile.email}.`);
       storeDriveSession(session);
+
+      // Auto-restore if local DB has no sessions (new device / first login).
+      const localSessions = await loadSessions();
+      if (localSessions.length === 0) {
+        setDriveStatus(`Signed in as ${profile.email}. Restoring backup…`);
+        await applyDriveBackup(session.accessToken);
+        setDriveStatus(`Backup restored. Signed in as ${profile.email}.`);
+      } else {
+        setDriveStatus(`Google Drive connected as ${profile.email}.`);
+      }
+
       return session.accessToken;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Google Drive connection failed.";
@@ -939,48 +998,7 @@ function App() {
     }
 
     try {
-      const payload = await downloadBackupFromGoogleDrive(token);
-      await clearSessions();
-      await clearEwmaSnapshots();
-      await clearStrengthTemplates();
-      await clearStrengthSessions();
-
-      const restoredSettings = clampSettings(payload.settings ?? DEFAULT_SETTINGS);
-      await saveSettings(restoredSettings);
-
-      for (const restoredSession of payload.sessions) {
-        await saveSession(restoredSession);
-      }
-
-      for (const snapshot of payload.ewmaSnapshots ?? []) {
-        await saveEwmaSnapshot(snapshot);
-      }
-
-      for (const template of payload.strengthTemplates ?? [DEFAULT_STRENGTH_TEMPLATE]) {
-        await saveStrengthTemplate(template);
-      }
-
-      for (const session of payload.strengthSessions ?? []) {
-        await saveStrengthSession(session);
-      }
-
-      const [sessionsFromDb, snapshotsFromDb, templatesFromDb, strengthSessionsFromDb] = await Promise.all([
-        loadSessions(),
-        loadEwmaSnapshots(),
-        loadStrengthTemplates(),
-        loadStrengthSessions(),
-      ]);
-      const mappedSnapshots = snapshotsFromDb.reduce<Record<string, EWMASnapshot>>((acc, snapshot) => {
-        acc[snapshot.key] = snapshot;
-        return acc;
-      }, {});
-
-      setSettings(restoredSettings);
-      setSessions(sessionsFromDb);
-      setEwmaSnapshots(mappedSnapshots);
-      setStrengthTemplates(templatesFromDb);
-      setStrengthSessions(strengthSessionsFromDb);
-      setDraft(createSessionDraft(restoredSettings));
+      await applyDriveBackup(token);
       setDriveStatus("Backup restored from Google Drive.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Restore failed.";
