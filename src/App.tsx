@@ -334,6 +334,7 @@ function App() {
   const [strengthTemplates, setStrengthTemplates] = useState<StrengthExerciseTemplate[]>([]);
   const [strengthSessions, setStrengthSessions] = useState<StrengthSession[]>([]);
   const [selectedStrengthTemplateId, setSelectedStrengthTemplateId] = useState<string | undefined>();
+  const [amrapDraftByTemplateWeek, setAmrapDraftByTemplateWeek] = useState<Record<string, string>>({});
   const [editingStrengthSessionId, setEditingStrengthSessionId] = useState<string | undefined>();
   const [editingStrengthSessionCreatedAt, setEditingStrengthSessionCreatedAt] = useState<string | undefined>();
   const [editingStrengthExercises, setEditingStrengthExercises] = useState<StrengthSession["exercises"]>([]);
@@ -686,6 +687,44 @@ function App() {
   async function removeStrengthTemplate(templateId: string): Promise<void> {
     await deleteStrengthTemplate(templateId);
     setStrengthTemplates((previous) => previous.filter((item) => item.id !== templateId));
+  }
+
+  function getTemplateWeekKey(templateId: string, week: FiveThreeOneWeek): string {
+    return `${templateId}-${week}`;
+  }
+
+  async function saveAmrapPerformed(templateId: string, week: FiveThreeOneWeek): Promise<void> {
+    const key = getTemplateWeekKey(templateId, week);
+    const rawValue = amrapDraftByTemplateWeek[key] ?? "";
+    const parsed = Number(rawValue);
+
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return;
+    }
+
+    const reps = Math.round(parsed);
+
+    const targetTemplate = strengthTemplates.find((item) => item.id === templateId);
+    if (!targetTemplate) {
+      return;
+    }
+
+    const updatedTemplate: StrengthExerciseTemplate = {
+      ...targetTemplate,
+      amrapPerformedByWeek: {
+        ...(targetTemplate.amrapPerformedByWeek ?? {}),
+        [week]: reps,
+      },
+    };
+
+    await saveStrengthTemplate(updatedTemplate);
+    setStrengthTemplates((previous) =>
+      previous.map((item) => (item.id === templateId ? updatedTemplate : item)).sort((a, b) => a.name.localeCompare(b.name)),
+    );
+    setAmrapDraftByTemplateWeek((previous) => ({
+      ...previous,
+      [key]: String(reps),
+    }));
   }
 
   async function saveStrengthProtocolSession(): Promise<void> {
@@ -1403,11 +1442,22 @@ function App() {
                         <td>
                           <button
                             type="button"
-                            onClick={() =>
+                            onClick={() => {
                               setSelectedStrengthTemplateId((previous) =>
                                 previous === template.id ? undefined : template.id,
-                              )
-                            }
+                              );
+                              setAmrapDraftByTemplateWeek((previous) => {
+                                const next = { ...previous };
+                                for (const weekValue of [1, 2, 3, 4] as FiveThreeOneWeek[]) {
+                                  const key = getTemplateWeekKey(template.id, weekValue);
+                                  if (next[key] === undefined) {
+                                    const saved = template.amrapPerformedByWeek?.[weekValue];
+                                    next[key] = typeof saved === "number" ? String(saved) : "";
+                                  }
+                                }
+                                return next;
+                              });
+                            }}
                           >
                             {template.name}
                           </button>
@@ -1441,11 +1491,23 @@ function App() {
                   }
 
                   const tm = getTemplateTrainingMax(template);
-                  const sets = build531Sets(tm, template.incrementKg, week as FiveThreeOneWeek);
+                  const weekTyped = week as FiveThreeOneWeek;
+                  const sets = build531Sets(tm, template.incrementKg, weekTyped);
+                  const topSet = sets[sets.length - 1];
+                  const hasAmrapSet = topSet.reps.includes("+");
+                  const draftKey = getTemplateWeekKey(template.id, weekTyped);
+                  const amrapDraft = amrapDraftByTemplateWeek[draftKey] ?? "";
 
                   return (
                     <article key={`week-preview-${week}`} className="panel">
-                      <h3>{template.name} - Week {week}</h3>
+                      <div className="metric-row">
+                        <h3>{template.name} - Week {week}</h3>
+                        {hasAmrapSet && (
+                          <button type="button" onClick={() => void saveAmrapPerformed(template.id, weekTyped)}>
+                            Save
+                          </button>
+                        )}
+                      </div>
                       <table>
                         <thead>
                           <tr>
@@ -1453,6 +1515,7 @@ function App() {
                             <th>%</th>
                             <th>Reps</th>
                             <th>Target</th>
+                            <th>Reps performed</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1462,6 +1525,24 @@ function App() {
                               <td>{Math.round(set.percentage * 100)}%</td>
                               <td>{set.reps}</td>
                               <td>{set.targetWeightKg.toFixed(1)} kg</td>
+                              <td>
+                                {index === sets.length - 1 && hasAmrapSet ? (
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={amrapDraft}
+                                    onChange={(event) =>
+                                      setAmrapDraftByTemplateWeek((previous) => ({
+                                        ...previous,
+                                        [draftKey]: event.target.value,
+                                      }))
+                                    }
+                                    placeholder="AMRAP reps"
+                                  />
+                                ) : (
+                                  "-"
+                                )}
+                              </td>
                             </tr>
                           ))}
                         </tbody>

@@ -153,6 +153,7 @@ export interface StrengthExerciseTemplate {
   oneRepMaxKg?: number;
   trainingMaxKg: number;
   incrementKg: number;
+  amrapPerformedByWeek?: Partial<Record<FiveThreeOneWeek, number>>;
 }
 
 export interface FiveThreeOneSet {
