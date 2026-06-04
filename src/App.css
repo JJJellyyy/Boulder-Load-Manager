@@ -102,6 +102,38 @@
   word-break: break-word;
 }
 
+.drive-log {
+  margin-top: 0.75rem;
+  background: #1a1a2e;
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  font-family: monospace;
+  font-size: 0.75rem;
+}
+
+.drive-log-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.4rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.drive-log-clear {
+  font-size: 0.7rem;
+  padding: 0.1rem 0.4rem;
+  background: transparent;
+  border: 1px solid var(--muted);
+  cursor: pointer;
+}
+
+.drive-log-entry {
+  margin: 0.1rem 0;
+  color: #a0ffa0;
+  word-break: break-all;
+}
+
 .eyebrow {
   text-transform: uppercase;
   letter-spacing: 0.12em;

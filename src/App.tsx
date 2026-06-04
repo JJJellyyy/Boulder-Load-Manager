@@ -347,6 +347,13 @@ function App() {
   const [googleProfile, setGoogleProfile] = useState<GoogleProfile | undefined>();
   const [driveStatus, setDriveStatus] = useState<string>("Google Drive not connected.");
   const [driveConnectError, setDriveConnectError] = useState<string | undefined>(undefined);
+  const [driveLog, setDriveLog] = useState<string[]>([]);
+
+  function addDriveLog(msg: string): void {
+    const entry = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    console.log("[Drive]", msg);
+    setDriveLog((prev) => [...prev.slice(-19), entry]);
+  }
 
   const [entryCount, setEntryCount] = useState(1);
   const [entryGrade, setEntryGrade] = useState<Grade>("V4");
@@ -924,18 +931,24 @@ function App() {
       return undefined;
     }
 
+    addDriveLog("connectGoogleDrive() started");
     try {
-      const session = await authorizeGoogleDrive(googleClientId, "consent");
+      const session = await authorizeGoogleDrive(googleClientId, "consent", addDriveLog);
+      addDriveLog("Token received. Fetching profile…");
       const profile = await fetchGoogleProfile(session.accessToken);
+      addDriveLog(`Profile OK: ${profile.email}`);
       setDriveSession(session);
       setGoogleProfile(profile);
       storeDriveSession(session);
 
       // Auto-restore if local DB has no sessions (new device / first login).
       const localSessions = await loadSessions();
+      addDriveLog(`Local sessions: ${localSessions.length}`);
       if (localSessions.length === 0) {
         setDriveStatus(`Signed in as ${profile.email}. Restoring backup…`);
+        addDriveLog("No local data — restoring from Drive…");
         await applyDriveBackup(session.accessToken);
+        addDriveLog("Restore complete.");
         setDriveStatus(`Backup restored. Signed in as ${profile.email}.`);
       } else {
         setDriveStatus(`Google Drive connected as ${profile.email}.`);
@@ -943,8 +956,8 @@ function App() {
 
       return session.accessToken;
     } catch (error) {
-      console.error("[Google Drive] connectGoogleDrive failed:", error);
       const message = error instanceof Error ? error.message : "Google Drive connection failed.";
+      addDriveLog(`ERROR: ${message}`);
       setDriveStatus(message);
       setDriveConnectError(message);
       return undefined;
@@ -965,7 +978,7 @@ function App() {
 
     if (googleClientId) {
       try {
-        const silentSession = await authorizeGoogleDrive(googleClientId, "");
+        const silentSession = await authorizeGoogleDrive(googleClientId, "", addDriveLog);
         const profile = googleProfile ?? (await fetchGoogleProfile(silentSession.accessToken));
         setDriveSession(silentSession);
         setGoogleProfile(profile);
@@ -1810,6 +1823,15 @@ function App() {
                 Restore Backup
               </button>
             </div>
+            {driveLog.length > 0 && (
+              <div className="drive-log">
+                <div className="drive-log-header">
+                  <span>Auth log</span>
+                  <button type="button" className="drive-log-clear" onClick={() => setDriveLog([])}>Clear</button>
+                </div>
+                {driveLog.map((entry, i) => <p key={i} className="drive-log-entry">{entry}</p>)}
+              </div>
+            )}
 
             <h3>ACWR Math Demo</h3>
             <p>

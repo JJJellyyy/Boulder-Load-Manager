@@ -85,12 +85,15 @@ function loadGoogleIdentityScript(): Promise<void> {
 export async function authorizeGoogleDrive(
   clientId: string,
   prompt: "consent" | "" = "consent",
+  log?: (msg: string) => void,
 ): Promise<GoogleAuthSession> {
   if (!clientId) {
     throw new Error("Missing VITE_GOOGLE_CLIENT_ID. Add it in Vercel environment variables.");
   }
 
+  log?.("Loading Google Identity script…");
   await loadGoogleIdentityScript();
+  log?.("Script loaded. Initialising token client…");
 
   return new Promise((resolve, reject) => {
     const oauth2 = window.google?.accounts?.oauth2;
@@ -99,22 +102,29 @@ export async function authorizeGoogleDrive(
       return;
     }
 
-    const tokenClient = oauth2.initTokenClient({
+    const tokenClient = (oauth2 as unknown as {
+      initTokenClient: (config: object) => TokenClient;
+    }).initTokenClient({
       client_id: clientId,
       scope: DRIVE_SCOPE,
       callback: (response: TokenResponse) => {
+        log?.(`Callback fired. error=${String(response.error)} has_token=${!!response.access_token}`);
         if (response.error || !response.access_token) {
           reject(new Error(response.error || "Google authorization failed."));
           return;
         }
-
         resolve({
           accessToken: response.access_token,
           expiresAt: Date.now() + (response.expires_in ?? 3600) * 1000,
         });
       },
+      error_callback: (err: { type: string; message?: string }) => {
+        log?.(`error_callback: type=${err.type} message=${err.message ?? ""}`);
+        reject(new Error(`${err.type}${err.message ? ": " + err.message : ""}`))
+      },
     });
 
+    log?.(`Requesting access token (prompt="${prompt}")…`);
     tokenClient.requestAccessToken({ prompt });
   });
 }
