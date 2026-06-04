@@ -91,11 +91,18 @@ export function calculateSpeedMultiplier(totalProblems: number, durationMinutes:
 
   // Fixed exponential pace model:
   // 10 min per boulder => x0 intensity contribution, 1 min per boulder => x5.
+  // Keep 10-4 mostly flat, then ramp steeply at 3-1.
   const clampedMinutes = clamp(minutesPerBoulder, 1, 10);
-  const progress = (10 - clampedMinutes) / 9;
-  const steepness = 2.2;
-  const scaled = (Math.exp(steepness * progress) - 1) / (Math.exp(steepness) - 1);
-  const value = scaled * 5;
+  let value: number;
+
+  if (clampedMinutes >= 4) {
+    const progress = (10 - clampedMinutes) / 6;
+    value = 0.5 * Math.pow(progress, 2);
+  } else {
+    const progress = (4 - clampedMinutes) / 3;
+    value = 0.5 + 4.5 * Math.pow(progress, 2.6);
+  }
+
   return clamp(value, 0, 5);
 }
 
