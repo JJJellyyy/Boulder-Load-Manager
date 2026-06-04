@@ -932,6 +932,9 @@ function App() {
     }
 
     addDriveLog("connectGoogleDrive() started");
+    addDriveLog(`Origin: ${window.location.origin}`);
+    addDriveLog(`Client ID starts with: ${googleClientId.slice(0, 12)}…`);
+    addDriveLog(`google.accounts.oauth2 available: ${!!window.google?.accounts?.oauth2}`);
     try {
       const session = await authorizeGoogleDrive(googleClientId, "consent", addDriveLog);
       addDriveLog("Token received. Fetching profile…");
