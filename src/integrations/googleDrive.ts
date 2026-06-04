@@ -1,6 +1,5 @@
 import type { DriveBackupPayload } from "../types";
 
-const GOOGLE_IDENTITY_SCRIPT = "https://accounts.google.com/gsi/client";
 const DRIVE_SCOPE = [
   "https://www.googleapis.com/auth/drive.file",
   "openid",
@@ -8,16 +7,6 @@ const DRIVE_SCOPE = [
   "profile",
 ].join(" ");
 const BACKUP_FILE_NAME = "boulder-load-manager-backup.json";
-
-interface TokenResponse {
-  access_token: string;
-  expires_in?: number;
-  error?: string;
-}
-
-interface TokenClient {
-  requestAccessToken: (options?: { prompt?: string }) => void;
-}
 
 export interface GoogleAuthSession {
   accessToken: string;
@@ -31,121 +20,43 @@ export interface GoogleProfile {
   picture?: string;
 }
 
-declare global {
-  interface Window {
-    google?: {
-      accounts?: {
-        oauth2?: {
-          initTokenClient: (config: {
-            client_id: string;
-            scope: string;
-            callback: (response: TokenResponse) => void;
-          }) => TokenClient;
-        };
-      };
-    };
-  }
+/** Redirect the browser to Google's OAuth consent page. Returns after redirect — caller never resumes. */
+export function initiateGoogleOAuthRedirect(clientId: string): void {
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: window.location.origin,
+    response_type: "token",
+    scope: DRIVE_SCOPE,
+    prompt: "consent",
+    include_granted_scopes: "true",
+  });
+  window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
 }
 
-let scriptPromise: Promise<void> | undefined;
-
-function loadGoogleIdentityScript(): Promise<void> {
-  if (scriptPromise) {
-    return scriptPromise;
-  }
-
-  scriptPromise = new Promise((resolve, reject) => {
-    const existing = document.querySelector<HTMLScriptElement>(
-      `script[src=\"${GOOGLE_IDENTITY_SCRIPT}\"]`,
-    );
-
-    if (existing) {
-      if (window.google?.accounts?.oauth2) {
-        resolve();
-        return;
-      }
-
-      existing.addEventListener("load", () => resolve());
-      existing.addEventListener("error", () => reject(new Error("Failed to load Google Identity script.")));
-      return;
-    }
-
-    const script = document.createElement("script");
-    script.src = GOOGLE_IDENTITY_SCRIPT;
-    script.async = true;
-    script.defer = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Failed to load Google Identity script."));
-    document.head.appendChild(script);
-  });
-
-  return scriptPromise;
-}
-
-export async function authorizeGoogleDrive(
-  clientId: string,
-  prompt: "consent" | "" = "consent",
-  log?: (msg: string) => void,
-): Promise<GoogleAuthSession> {
-  if (!clientId) {
-    throw new Error("Missing VITE_GOOGLE_CLIENT_ID. Add it in Vercel environment variables.");
-  }
-
-  log?.("Loading Google Identity script…");
-  await loadGoogleIdentityScript();
-  log?.("Script loaded. Initialising token client…");
-
-  return new Promise((resolve, reject) => {
-    const oauth2 = window.google?.accounts?.oauth2;
-    if (!oauth2) {
-      reject(new Error("Google OAuth client could not be initialized."));
-      return;
-    }
-
-    const tokenClient = (oauth2 as unknown as {
-      initTokenClient: (config: object) => TokenClient;
-    }).initTokenClient({
-      client_id: clientId,
-      scope: DRIVE_SCOPE,
-      callback: (response: TokenResponse) => {
-        log?.(`Callback fired. error=${String(response.error)} has_token=${!!response.access_token}`);
-        if (response.error || !response.access_token) {
-          reject(new Error(response.error || "Google authorization failed."));
-          return;
-        }
-        resolve({
-          accessToken: response.access_token,
-          expiresAt: Date.now() + (response.expires_in ?? 3600) * 1000,
-        });
-      },
-      error_callback: (err: { type: string; message?: string }) => {
-        log?.(`error_callback: type=${err.type} message=${err.message ?? ""}`);
-        if (err.type === "popup_closed") {
-          reject(new Error("popup_closed — If Google showed an 'unverified app' warning, click Advanced → Go to boulder-load-manager.vercel.app to proceed. Otherwise allow popups for this site."));
-        } else if (err.type === "popup_blocked") {
-          reject(new Error("Popup was blocked by the browser. Please allow popups for this site and try again."));
-        } else {
-          reject(new Error(`${err.type}${err.message ? ": " + err.message : ""}`));
-        }
-      },
-    });
-
-    log?.(`Requesting access token (prompt="${prompt}")…`);
-    tokenClient.requestAccessToken({ prompt });
-  });
+/**
+ * Check if Google redirected back to us with a token in the URL hash.
+ * Call on app startup. Returns the session and cleans up the URL hash if found.
+ */
+export function extractOAuthTokenFromUrl(): GoogleAuthSession | null {
+  const hash = window.location.hash.substring(1);
+  if (!hash) return null;
+  const params = new URLSearchParams(hash);
+  const accessToken = params.get("access_token");
+  const expiresIn = params.get("expires_in");
+  if (!accessToken) return null;
+  // Clean token out of the URL bar
+  window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  return {
+    accessToken,
+    expiresAt: Date.now() + parseInt(expiresIn ?? "3600") * 1000,
+  };
 }
 
 export async function fetchGoogleProfile(accessToken: string): Promise<GoogleProfile> {
   const response = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
-
-  if (!response.ok) {
-    throw new Error("Failed to fetch Google profile.");
-  }
-
+  if (!response.ok) throw new Error("Failed to fetch Google profile.");
   return (await response.json()) as GoogleProfile;
 }
 
@@ -159,32 +70,18 @@ async function findBackupFileId(accessToken: string): Promise<string | undefined
   const query = encodeURIComponent(
     `name='${BACKUP_FILE_NAME}' and trashed=false and 'root' in parents`,
   );
-
   const response = await fetch(
     `https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,name,modifiedTime)&pageSize=1`,
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    },
+    { headers: { Authorization: `Bearer ${accessToken}` } },
   );
-
-  if (!response.ok) {
-    throw new Error("Failed to query Google Drive backup files.");
-  }
-
+  if (!response.ok) throw new Error("Failed to query Google Drive backup files.");
   const payload = (await response.json()) as { files?: DriveFile[] };
   return payload.files?.[0]?.id;
 }
 
 function createMultipartBody(payload: DriveBackupPayload): { body: string; boundary: string } {
   const boundary = `boundary_${Date.now()}`;
-  const metadata = {
-    name: BACKUP_FILE_NAME,
-    mimeType: "application/json",
-    parents: ["root"],
-  };
-
+  const metadata = { name: BACKUP_FILE_NAME, mimeType: "application/json", parents: ["root"] };
   const body = [
     `--${boundary}`,
     "Content-Type: application/json; charset=UTF-8",
@@ -197,7 +94,6 @@ function createMultipartBody(payload: DriveBackupPayload): { body: string; bound
     `--${boundary}--`,
     "",
   ].join("\r\n");
-
   return { body, boundary };
 }
 
@@ -207,13 +103,10 @@ export async function uploadBackupToGoogleDrive(
 ): Promise<void> {
   const fileId = await findBackupFileId(accessToken);
   const { body, boundary } = createMultipartBody(payload);
-
   const endpoint = fileId
     ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
     : "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart";
-
   const method = fileId ? "PATCH" : "POST";
-
   const response = await fetch(endpoint, {
     method,
     headers: {
@@ -222,34 +115,19 @@ export async function uploadBackupToGoogleDrive(
     },
     body,
   });
-
-  if (!response.ok) {
-    throw new Error("Failed to upload backup to Google Drive.");
-  }
+  if (!response.ok) throw new Error("Failed to upload backup to Google Drive.");
 }
 
 export async function downloadBackupFromGoogleDrive(accessToken: string): Promise<DriveBackupPayload> {
   const fileId = await findBackupFileId(accessToken);
-
-  if (!fileId) {
-    throw new Error("No backup file found in Google Drive.");
-  }
-
+  if (!fileId) throw new Error("No backup file found in Google Drive.");
   const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
-
-  if (!response.ok) {
-    throw new Error("Failed to download backup from Google Drive.");
-  }
-
+  if (!response.ok) throw new Error("Failed to download backup from Google Drive.");
   const payload = (await response.json()) as DriveBackupPayload;
-
   if (!payload.version || !payload.settings || !Array.isArray(payload.sessions)) {
     throw new Error("Backup payload is invalid.");
   }
-
   return payload;
 }

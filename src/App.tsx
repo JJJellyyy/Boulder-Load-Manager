@@ -29,7 +29,8 @@ import {
   suggestedCapacityRange,
 } from "./domain/loadCalculator";
 import {
-  authorizeGoogleDrive,
+  initiateGoogleOAuthRedirect,
+  extractOAuthTokenFromUrl,
   downloadBackupFromGoogleDrive,
   fetchGoogleProfile,
   type GoogleAuthSession,
@@ -602,41 +603,43 @@ function App() {
 
       setStrengthSessions(savedStrengthSessions);
 
-      const existingDriveSession = readStoredDriveSession();
-      if (existingDriveSession) {
+      // Check if Google redirected back with a token in the URL hash.
+      const redirectSession = extractOAuthTokenFromUrl();
+      if (redirectSession) {
         try {
-          const profile = await fetchGoogleProfile(existingDriveSession.accessToken);
-          setDriveSession(existingDriveSession);
+          addDriveLog("OAuth redirect detected. Fetching profile…");
+          const profile = await fetchGoogleProfile(redirectSession.accessToken);
+          addDriveLog(`Profile OK: ${profile.email}`);
+          setDriveSession(redirectSession);
           setGoogleProfile(profile);
-
-          // Auto-restore if this device has no local sessions yet.
+          storeDriveSession(redirectSession);
           if (savedSessions.length === 0) {
             setDriveStatus(`Signed in as ${profile.email}. Restoring backup…`);
-            await applyDriveBackup(existingDriveSession.accessToken);
+            addDriveLog("No local data — restoring from Drive…");
+            await applyDriveBackup(redirectSession.accessToken);
+            addDriveLog("Restore complete.");
             setDriveStatus(`Backup restored. Signed in as ${profile.email}.`);
           } else {
             setDriveStatus(`Google Drive connected as ${profile.email}.`);
           }
-        } catch {
-          if (googleClientId) {
-            try {
-              const refreshedSession = await authorizeGoogleDrive(googleClientId, "");
-              const refreshedProfile = await fetchGoogleProfile(refreshedSession.accessToken);
-              setDriveSession(refreshedSession);
-              setGoogleProfile(refreshedProfile);
-              storeDriveSession(refreshedSession);
-
-              if (savedSessions.length === 0) {
-                setDriveStatus(`Signed in as ${refreshedProfile.email}. Restoring backup…`);
-                await applyDriveBackup(refreshedSession.accessToken);
-                setDriveStatus(`Backup restored. Signed in as ${refreshedProfile.email}.`);
-              } else {
-                setDriveStatus(`Google Drive connected as ${refreshedProfile.email}.`);
-              }
-            } catch {
-              storeDriveSession(undefined);
+        } catch (err) {
+          addDriveLog(`Redirect sign-in error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      } else {
+        const existingDriveSession = readStoredDriveSession();
+        if (existingDriveSession) {
+          try {
+            const profile = await fetchGoogleProfile(existingDriveSession.accessToken);
+            setDriveSession(existingDriveSession);
+            setGoogleProfile(profile);
+            if (savedSessions.length === 0) {
+              setDriveStatus(`Signed in as ${profile.email}. Restoring backup…`);
+              await applyDriveBackup(existingDriveSession.accessToken);
+              setDriveStatus(`Backup restored. Signed in as ${profile.email}.`);
+            } else {
+              setDriveStatus(`Google Drive connected as ${profile.email}.`);
             }
-          } else {
+          } catch {
             storeDriveSession(undefined);
           }
         }
@@ -925,46 +928,13 @@ function App() {
     }
   }
 
-  async function connectGoogleDrive(): Promise<string | undefined> {
+  function connectGoogleDrive(): void {
     if (!googleClientId) {
-      setDriveStatus("Missing VITE_GOOGLE_CLIENT_ID. Configure it in Vercel and .env.local.");
-      return undefined;
+      setDriveConnectError("Missing VITE_GOOGLE_CLIENT_ID. Configure it in Vercel and .env.local.");
+      return;
     }
-
-    addDriveLog("connectGoogleDrive() started");
-    addDriveLog(`Origin: ${window.location.origin}`);
-    addDriveLog(`Client ID starts with: ${googleClientId.slice(0, 12)}…`);
-    addDriveLog(`google.accounts.oauth2 available: ${!!window.google?.accounts?.oauth2}`);
-    try {
-      const session = await authorizeGoogleDrive(googleClientId, "consent", addDriveLog);
-      addDriveLog("Token received. Fetching profile…");
-      const profile = await fetchGoogleProfile(session.accessToken);
-      addDriveLog(`Profile OK: ${profile.email}`);
-      setDriveSession(session);
-      setGoogleProfile(profile);
-      storeDriveSession(session);
-
-      // Auto-restore if local DB has no sessions (new device / first login).
-      const localSessions = await loadSessions();
-      addDriveLog(`Local sessions: ${localSessions.length}`);
-      if (localSessions.length === 0) {
-        setDriveStatus(`Signed in as ${profile.email}. Restoring backup…`);
-        addDriveLog("No local data — restoring from Drive…");
-        await applyDriveBackup(session.accessToken);
-        addDriveLog("Restore complete.");
-        setDriveStatus(`Backup restored. Signed in as ${profile.email}.`);
-      } else {
-        setDriveStatus(`Google Drive connected as ${profile.email}.`);
-      }
-
-      return session.accessToken;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Google Drive connection failed.";
-      addDriveLog(`ERROR: ${message}`);
-      setDriveStatus(message);
-      setDriveConnectError(message);
-      return undefined;
-    }
+    addDriveLog(`Redirecting to Google OAuth… origin=${window.location.origin}`);
+    initiateGoogleOAuthRedirect(googleClientId);
   }
 
   function disconnectGoogleDrive(): void {
@@ -974,30 +944,18 @@ function App() {
     setDriveStatus("Google Drive disconnected.");
   }
 
-  async function ensureDriveAccessToken(): Promise<string | undefined> {
+  function ensureDriveAccessToken(): string | undefined {
     if (driveSession && Date.now() < driveSession.expiresAt - 15_000) {
       return driveSession.accessToken;
     }
-
-    if (googleClientId) {
-      try {
-        const silentSession = await authorizeGoogleDrive(googleClientId, "", addDriveLog);
-        const profile = googleProfile ?? (await fetchGoogleProfile(silentSession.accessToken));
-        setDriveSession(silentSession);
-        setGoogleProfile(profile);
-        storeDriveSession(silentSession);
-        return silentSession.accessToken;
-      } catch {
-        return connectGoogleDrive();
-      }
-    }
-
     return undefined;
   }
 
+
   async function handleDriveUpload(): Promise<void> {
-    const token = await ensureDriveAccessToken();
+    const token = ensureDriveAccessToken();
     if (!token) {
+      setDriveStatus("Token expired — please sign in again.");
       return;
     }
 
@@ -1011,8 +969,9 @@ function App() {
   }
 
   async function handleDriveRestore(): Promise<void> {
-    const token = await ensureDriveAccessToken();
+    const token = ensureDriveAccessToken();
     if (!token) {
+      setDriveStatus("Token expired — please sign in again.");
       return;
     }
 
@@ -1097,7 +1056,7 @@ function App() {
             </div>
           ) : (
             <div className="connect-top-col">
-              <button type="button" className="connect-top-btn" onClick={() => { setDriveConnectError(undefined); void connectGoogleDrive(); }}>
+              <button type="button" className="connect-top-btn" onClick={() => { setDriveConnectError(undefined); connectGoogleDrive(); }}>
                 Sign in with Google
               </button>
               {driveConnectError && (
@@ -1818,7 +1777,7 @@ function App() {
               Current origin: <strong>{window.location.origin}</strong>
             </p>
             <div className="metric-row">
-              <button type="button" onClick={() => void connectGoogleDrive()}>
+              <button type="button" onClick={() => connectGoogleDrive()}>
                 Connect Google Drive
               </button>
               <button type="button" onClick={disconnectGoogleDrive}>
