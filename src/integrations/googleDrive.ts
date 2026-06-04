@@ -120,7 +120,13 @@ export async function authorizeGoogleDrive(
       },
       error_callback: (err: { type: string; message?: string }) => {
         log?.(`error_callback: type=${err.type} message=${err.message ?? ""}`);
-        reject(new Error(`${err.type}${err.message ? ": " + err.message : ""}`))
+        if (err.type === "popup_closed") {
+          reject(new Error("Popup closed before sign-in completed. If you completed the login, the drive.file scope is likely missing from your OAuth consent screen in Google Cloud Console."));
+        } else if (err.type === "popup_blocked") {
+          reject(new Error("Popup was blocked by the browser. Please allow popups for this site and try again."));
+        } else {
+          reject(new Error(`${err.type}${err.message ? ": " + err.message : ""}`));
+        }
       },
     });
 
