@@ -102,6 +102,13 @@
   word-break: break-word;
 }
 
+.drive-connect-hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin: 0;
+  max-width: 220px;
+}
+
 .drive-log {
   margin-top: 0.75rem;
   background: #1a1a2e;

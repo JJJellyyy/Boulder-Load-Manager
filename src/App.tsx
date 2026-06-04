@@ -1100,7 +1100,12 @@ function App() {
               <button type="button" className="connect-top-btn" onClick={() => { setDriveConnectError(undefined); void connectGoogleDrive(); }}>
                 Sign in with Google
               </button>
-              {driveConnectError && <p className="drive-connect-error">{driveConnectError}</p>}
+              {driveConnectError && (
+                <>
+                  <p className="drive-connect-error">{driveConnectError}</p>
+                  <p className="drive-connect-hint">⚠️ If Google shows "This app isn't verified", click <strong>Advanced</strong> → <strong>Go to boulder-load-manager.vercel.app</strong> to continue.</p>
+                </>
+              )}
             </div>
           )}
         </div>
