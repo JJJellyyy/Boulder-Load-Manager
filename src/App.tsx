@@ -346,6 +346,7 @@ function App() {
   const [driveSession, setDriveSession] = useState<GoogleAuthSession | undefined>();
   const [googleProfile, setGoogleProfile] = useState<GoogleProfile | undefined>();
   const [driveStatus, setDriveStatus] = useState<string>("Google Drive not connected.");
+  const [driveConnectError, setDriveConnectError] = useState<string | undefined>(undefined);
 
   const [entryCount, setEntryCount] = useState(1);
   const [entryGrade, setEntryGrade] = useState<Grade>("V4");
@@ -942,8 +943,10 @@ function App() {
 
       return session.accessToken;
     } catch (error) {
+      console.error("[Google Drive] connectGoogleDrive failed:", error);
       const message = error instanceof Error ? error.message : "Google Drive connection failed.";
       setDriveStatus(message);
+      setDriveConnectError(message);
       return undefined;
     }
   }
@@ -1077,9 +1080,12 @@ function App() {
               <button type="button" onClick={disconnectGoogleDrive}>Sign out</button>
             </div>
           ) : (
-            <button type="button" className="connect-top-btn" onClick={() => void connectGoogleDrive()}>
-              Sign in with Google
-            </button>
+            <div className="connect-top-col">
+              <button type="button" className="connect-top-btn" onClick={() => { setDriveConnectError(undefined); void connectGoogleDrive(); }}>
+                Sign in with Google
+              </button>
+              {driveConnectError && <p className="drive-connect-error">{driveConnectError}</p>}
+            </div>
           )}
         </div>
         <div>

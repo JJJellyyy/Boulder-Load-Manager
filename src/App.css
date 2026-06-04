@@ -87,6 +87,21 @@
   background: rgba(255, 255, 255, 0.92);
 }
 
+.connect-top-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+
+.drive-connect-error {
+  font-size: 0.78rem;
+  color: #ff6b6b;
+  margin: 0;
+  max-width: 220px;
+  word-break: break-word;
+}
+
 .eyebrow {
   text-transform: uppercase;
   letter-spacing: 0.12em;
