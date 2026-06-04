@@ -3,12 +3,19 @@ import "./App.css";
 import {
   clearEwmaSnapshots,
   clearSessions,
+  clearStrengthSessions,
+  clearStrengthTemplates,
+  deleteStrengthTemplate,
   loadEwmaSnapshots,
   loadSessions,
   loadSettings,
+  loadStrengthSessions,
+  loadStrengthTemplates,
   saveEwmaSnapshot,
   saveSession,
   saveSettings,
+  saveStrengthSession,
+  saveStrengthTemplate,
 } from "./db/indexedDb";
 import { updateSnapshot } from "./domain/ewma";
 import { DEFAULT_SETTINGS, clampSettings } from "./domain/loadModelConfig";
@@ -40,12 +47,16 @@ import {
   type Grade,
   type GradeDisplayUnit,
   type HoldType,
+  type FiveThreeOneSet,
+  type FiveThreeOneWeek,
   type ProblemEntry,
   type SessionInput,
+  type StrengthExerciseTemplate,
+  type StrengthSession,
   type WallAngle,
 } from "./types";
 
-type TabName = "session" | "dashboard" | "settings" | "history";
+type TabName = "session" | "dashboard" | "strength" | "settings" | "history";
 
 interface SessionDraft {
   durationMinutes: number;
@@ -78,6 +89,58 @@ function todayIsoDate(): string {
 }
 
 const GOOGLE_SESSION_STORAGE_KEY = "blm_google_session";
+
+const DEFAULT_STRENGTH_TEMPLATE: StrengthExerciseTemplate = {
+  id: "weighted-pull-up",
+  name: "Weighted Pull-up",
+  trainingMaxKg: 20,
+  incrementKg: 2.5,
+};
+
+function roundToIncrement(value: number, increment: number): number {
+  const safeIncrement = Math.max(0.5, increment);
+  return Math.round(value / safeIncrement) * safeIncrement;
+}
+
+function get531Prescription(week: FiveThreeOneWeek): Array<{ percentage: number; reps: string }> {
+  if (week === 1) {
+    return [
+      { percentage: 0.65, reps: "5" },
+      { percentage: 0.75, reps: "5" },
+      { percentage: 0.85, reps: "5+" },
+    ];
+  }
+
+  if (week === 2) {
+    return [
+      { percentage: 0.7, reps: "3" },
+      { percentage: 0.8, reps: "3" },
+      { percentage: 0.9, reps: "3+" },
+    ];
+  }
+
+  if (week === 3) {
+    return [
+      { percentage: 0.75, reps: "5" },
+      { percentage: 0.85, reps: "3" },
+      { percentage: 0.95, reps: "1+" },
+    ];
+  }
+
+  return [
+    { percentage: 0.4, reps: "5" },
+    { percentage: 0.5, reps: "5" },
+    { percentage: 0.6, reps: "5" },
+  ];
+}
+
+function build531Sets(trainingMaxKg: number, incrementKg: number, week: FiveThreeOneWeek): FiveThreeOneSet[] {
+  return get531Prescription(week).map((step) => ({
+    percentage: step.percentage,
+    reps: step.reps,
+    targetWeightKg: roundToIncrement(trainingMaxKg * step.percentage, incrementKg),
+  }));
+}
 
 function getEwmaValue(snapshot: EWMASnapshot, windowDays: EWMADays): number {
   if (windowDays === 10) {
@@ -247,6 +310,8 @@ function App() {
   const [tab, setTab] = useState<TabName>("session");
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [sessions, setSessions] = useState<SessionInput[]>([]);
+  const [strengthTemplates, setStrengthTemplates] = useState<StrengthExerciseTemplate[]>([]);
+  const [strengthSessions, setStrengthSessions] = useState<StrengthSession[]>([]);
   const [ewmaSnapshots, setEwmaSnapshots] = useState<Record<string, EWMASnapshot>>({});
   const [draft, setDraft] = useState<SessionDraft>(createSessionDraft(DEFAULT_SETTINGS));
   const [editingSessionId, setEditingSessionId] = useState<string | undefined>();
@@ -261,6 +326,12 @@ function App() {
   const [entryHold, setEntryHold] = useState<HoldType>("mixed");
   const [entryAngle, setEntryAngle] = useState<WallAngle>("vert");
   const [entryDate, setEntryDate] = useState<string>(todayIsoDate());
+  const [strengthWeek, setStrengthWeek] = useState<FiveThreeOneWeek>(1);
+  const [strengthDate, setStrengthDate] = useState<string>(todayIsoDate());
+  const [strengthNotes, setStrengthNotes] = useState<string>("");
+  const [templateName, setTemplateName] = useState<string>("");
+  const [templateTrainingMax, setTemplateTrainingMax] = useState<number>(20);
+  const [templateIncrement, setTemplateIncrement] = useState<number>(2.5);
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
   function storeDriveSession(session: GoogleAuthSession | undefined): void {
@@ -469,10 +540,12 @@ function App() {
 
   useEffect(() => {
     async function bootstrap() {
-      const [savedSettings, savedSessions, savedSnapshots] = await Promise.all([
+      const [savedSettings, savedSessions, savedSnapshots, savedTemplates, savedStrengthSessions] = await Promise.all([
         loadSettings(),
         loadSessions(),
         loadEwmaSnapshots(),
+        loadStrengthTemplates(),
+        loadStrengthSessions(),
       ]);
 
       const nextSettings = clampSettings(savedSettings ?? DEFAULT_SETTINGS);
@@ -485,6 +558,15 @@ function App() {
         return acc;
       }, {});
       setEwmaSnapshots(mapped);
+
+      if (savedTemplates.length === 0) {
+        await saveStrengthTemplate(DEFAULT_STRENGTH_TEMPLATE);
+        setStrengthTemplates([DEFAULT_STRENGTH_TEMPLATE]);
+      } else {
+        setStrengthTemplates(savedTemplates);
+      }
+
+      setStrengthSessions(savedStrengthSessions);
 
       const existingDriveSession = readStoredDriveSession();
       if (existingDriveSession) {
@@ -555,6 +637,55 @@ function App() {
       update(next);
       return clampSettings(next);
     });
+  }
+
+  async function addStrengthTemplate(): Promise<void> {
+    const name = templateName.trim();
+    if (!name) {
+      return;
+    }
+
+    const template: StrengthExerciseTemplate = {
+      id: getId(),
+      name,
+      trainingMaxKg: Math.max(1, templateTrainingMax),
+      incrementKg: Math.max(0.5, templateIncrement),
+    };
+
+    await saveStrengthTemplate(template);
+    setStrengthTemplates((previous) => [...previous, template].sort((a, b) => a.name.localeCompare(b.name)));
+    setTemplateName("");
+  }
+
+  async function removeStrengthTemplate(templateId: string): Promise<void> {
+    await deleteStrengthTemplate(templateId);
+    setStrengthTemplates((previous) => previous.filter((item) => item.id !== templateId));
+  }
+
+  async function saveStrengthProtocolSession(): Promise<void> {
+    if (strengthTemplates.length === 0) {
+      return;
+    }
+
+    const exercises = strengthTemplates.map((template) => ({
+      templateId: template.id,
+      name: template.name,
+      trainingMaxKg: template.trainingMaxKg,
+      sets: build531Sets(template.trainingMaxKg, template.incrementKg, strengthWeek),
+    }));
+
+    const session: StrengthSession = {
+      id: getId(),
+      createdAt: new Date().toISOString(),
+      sessionDate: strengthDate,
+      week: strengthWeek,
+      exercises,
+      notes: strengthNotes.trim() || undefined,
+    };
+
+    await saveStrengthSession(session);
+    setStrengthSessions((previous) => [session, ...previous]);
+    setStrengthNotes("");
   }
 
   function beginEditSession(session: SessionInput): void {
@@ -638,6 +769,8 @@ function App() {
       settings,
       sessions,
       ewmaSnapshots: Object.values(ewmaSnapshots),
+      strengthTemplates,
+      strengthSessions,
     };
   }
 
@@ -715,6 +848,8 @@ function App() {
       const payload = await downloadBackupFromGoogleDrive(token);
       await clearSessions();
       await clearEwmaSnapshots();
+      await clearStrengthTemplates();
+      await clearStrengthSessions();
 
       const restoredSettings = clampSettings(payload.settings ?? DEFAULT_SETTINGS);
       await saveSettings(restoredSettings);
@@ -727,8 +862,20 @@ function App() {
         await saveEwmaSnapshot(snapshot);
       }
 
-      const sessionsFromDb = await loadSessions();
-      const snapshotsFromDb = await loadEwmaSnapshots();
+      for (const template of payload.strengthTemplates ?? [DEFAULT_STRENGTH_TEMPLATE]) {
+        await saveStrengthTemplate(template);
+      }
+
+      for (const session of payload.strengthSessions ?? []) {
+        await saveStrengthSession(session);
+      }
+
+      const [sessionsFromDb, snapshotsFromDb, templatesFromDb, strengthSessionsFromDb] = await Promise.all([
+        loadSessions(),
+        loadEwmaSnapshots(),
+        loadStrengthTemplates(),
+        loadStrengthSessions(),
+      ]);
       const mappedSnapshots = snapshotsFromDb.reduce<Record<string, EWMASnapshot>>((acc, snapshot) => {
         acc[snapshot.key] = snapshot;
         return acc;
@@ -737,6 +884,8 @@ function App() {
       setSettings(restoredSettings);
       setSessions(sessionsFromDb);
       setEwmaSnapshots(mappedSnapshots);
+      setStrengthTemplates(templatesFromDb);
+      setStrengthSessions(strengthSessionsFromDb);
       setDraft(createSessionDraft(restoredSettings));
       setDriveStatus("Backup restored from Google Drive.");
     } catch (error) {
@@ -856,6 +1005,9 @@ function App() {
           className={tab === "dashboard" ? "active" : ""}
         >
           Dashboard
+        </button>
+        <button type="button" onClick={() => setTab("strength")} className={tab === "strength" ? "active" : ""}>
+          Strength
         </button>
         <button type="button" onClick={() => setTab("settings")} className={tab === "settings" ? "active" : ""}>
           Settings
@@ -1083,6 +1235,157 @@ function App() {
                         <td>{row.zone}</td>
                       </tr>
                     ))}
+                </tbody>
+              </table>
+            )}
+          </article>
+        </section>
+      )}
+
+      {tab === "strength" && (
+        <section className="panel-grid">
+          <article className="panel">
+            <h2>5/3/1 Planner</h2>
+            <p>
+              Training max is used directly per exercise. Week presets: 1 (5s), 2 (3s), 3 (5/3/1), 4 (deload).
+            </p>
+            <div className="field-grid">
+              <label>
+                Week
+                <select value={strengthWeek} onChange={(event) => setStrengthWeek(Number(event.target.value) as FiveThreeOneWeek)}>
+                  <option value={1}>Week 1 - 5/5/5+</option>
+                  <option value={2}>Week 2 - 3/3/3+</option>
+                  <option value={3}>Week 3 - 5/3/1+</option>
+                  <option value={4}>Week 4 - Deload</option>
+                </select>
+              </label>
+              <label>
+                Session date
+                <input type="date" value={strengthDate} onChange={(event) => setStrengthDate(event.target.value)} />
+              </label>
+            </div>
+            <label>
+              Notes
+              <input value={strengthNotes} onChange={(event) => setStrengthNotes(event.target.value)} placeholder="Optional notes for this strength day" />
+            </label>
+            <button type="button" onClick={() => void saveStrengthProtocolSession()} disabled={strengthTemplates.length === 0}>
+              Save Strength Session
+            </button>
+          </article>
+
+          <article className="panel">
+            <h2>Exercise Templates</h2>
+            <p>
+              Start with Weighted Pull-up by default, then add your own lifts.
+            </p>
+            <div className="field-grid">
+              <label>
+                Exercise name
+                <input value={templateName} onChange={(event) => setTemplateName(event.target.value)} placeholder="e.g. Front Squat" />
+              </label>
+              <label>
+                Training max (kg)
+                <NumberInput value={templateTrainingMax} min={1} step={0.5} onCommit={setTemplateTrainingMax} />
+              </label>
+              <label>
+                Plate increment (kg)
+                <NumberInput value={templateIncrement} min={0.5} step={0.5} onCommit={setTemplateIncrement} />
+              </label>
+            </div>
+            <button type="button" onClick={() => void addStrengthTemplate()}>
+              Add Exercise
+            </button>
+
+            {strengthTemplates.length > 0 && (
+              <table>
+                <thead>
+                  <tr>
+                    <th>Exercise</th>
+                    <th>TM</th>
+                    <th>Increment</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {strengthTemplates.map((template) => (
+                    <tr key={template.id}>
+                      <td>{template.name}</td>
+                      <td>{template.trainingMaxKg.toFixed(1)} kg</td>
+                      <td>{template.incrementKg.toFixed(1)} kg</td>
+                      <td>
+                        <button type="button" className="danger" onClick={() => void removeStrengthTemplate(template.id)}>
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </article>
+
+          <article className="panel full-width">
+            <h2>Calculated 5/3/1 Sets (Week {strengthWeek})</h2>
+            {strengthTemplates.length === 0 && <p>Add at least one exercise template.</p>}
+            {strengthTemplates.length > 0 && (
+              <div className="panel-grid">
+                {strengthTemplates.map((template) => {
+                  const sets = build531Sets(template.trainingMaxKg, template.incrementKg, strengthWeek);
+                  return (
+                    <article key={`plan-${template.id}`} className="panel">
+                      <h3>{template.name}</h3>
+                      <p>Training max: {template.trainingMaxKg.toFixed(1)} kg</p>
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Set</th>
+                            <th>%</th>
+                            <th>Reps</th>
+                            <th>Target</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sets.map((set, index) => (
+                            <tr key={`${template.id}-set-${index}`}>
+                              <td>{index + 1}</td>
+                              <td>{Math.round(set.percentage * 100)}%</td>
+                              <td>{set.reps}</td>
+                              <td>{set.targetWeightKg.toFixed(1)} kg</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </article>
+
+          <article className="panel full-width">
+            <h2>Strength History</h2>
+            {strengthSessions.length === 0 && <p>No strength sessions saved yet.</p>}
+            {strengthSessions.length > 0 && (
+              <table>
+                <thead>
+                  <tr>
+                    <th>Entry Date</th>
+                    <th>Session Date</th>
+                    <th>Week</th>
+                    <th>Exercises</th>
+                    <th>Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {strengthSessions.map((session) => (
+                    <tr key={session.id}>
+                      <td>{new Date(session.createdAt).toLocaleString()}</td>
+                      <td>{session.sessionDate}</td>
+                      <td>{session.week}</td>
+                      <td>{session.exercises.length}</td>
+                      <td>{session.notes ?? "-"}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             )}

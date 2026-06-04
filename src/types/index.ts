@@ -50,6 +50,7 @@ export type WallAngle = (typeof WALL_ANGLES)[number];
 
 export type EWMADays = 10 | 15 | 20 | 25;
 export type GradeDisplayUnit = "v" | "font";
+export type FiveThreeOneWeek = 1 | 2 | 3 | 4;
 
 export interface ProblemEntry {
   id: string;
@@ -142,4 +143,35 @@ export interface DriveBackupPayload {
   settings: AppSettings;
   sessions: SessionInput[];
   ewmaSnapshots: EWMASnapshot[];
+  strengthTemplates?: StrengthExerciseTemplate[];
+  strengthSessions?: StrengthSession[];
+}
+
+export interface StrengthExerciseTemplate {
+  id: string;
+  name: string;
+  trainingMaxKg: number;
+  incrementKg: number;
+}
+
+export interface FiveThreeOneSet {
+  percentage: number;
+  reps: string;
+  targetWeightKg: number;
+}
+
+export interface StrengthExercisePlan {
+  templateId: string;
+  name: string;
+  trainingMaxKg: number;
+  sets: FiveThreeOneSet[];
+}
+
+export interface StrengthSession {
+  id: string;
+  createdAt: string;
+  sessionDate: string;
+  week: FiveThreeOneWeek;
+  exercises: StrengthExercisePlan[];
+  notes?: string;
 }
