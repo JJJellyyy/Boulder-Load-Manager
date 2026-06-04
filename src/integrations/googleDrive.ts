@@ -35,12 +35,21 @@ export function initiateGoogleOAuthRedirect(clientId: string): void {
 
 /**
  * Check if Google redirected back to us with a token in the URL hash.
- * Call on app startup. Returns the session and cleans up the URL hash if found.
+ * Returns session on success, throws an error string if Google returned an error,
+ * or returns null if no OAuth response is present.
  */
 export function extractOAuthTokenFromUrl(): GoogleAuthSession | null {
   const hash = window.location.hash.substring(1);
   if (!hash) return null;
   const params = new URLSearchParams(hash);
+
+  const error = params.get("error");
+  if (error) {
+    // Clean up the URL
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    throw new Error(`Google OAuth error: ${error} — ${params.get("error_description") ?? ""}`);
+  }
+
   const accessToken = params.get("access_token");
   const expiresIn = params.get("expires_in");
   if (!accessToken) return null;

@@ -329,7 +329,10 @@ function NumberInput({ value, onCommit, min, max, step }: NumberInputProps) {
 }
 
 function App() {
-  const [tab, setTab] = useState<TabName>("session");
+  const [tab, setTab] = useState<TabName>(() => {
+    const saved = localStorage.getItem("blm_tab");
+    return (saved as TabName | null) ?? "session";
+  });
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [sessions, setSessions] = useState<SessionInput[]>([]);
   const [strengthTemplates, setStrengthTemplates] = useState<StrengthExerciseTemplate[]>([]);
@@ -349,6 +352,11 @@ function App() {
   const [driveStatus, setDriveStatus] = useState<string>("Google Drive not connected.");
   const [driveConnectError, setDriveConnectError] = useState<string | undefined>(undefined);
   const [driveLog, setDriveLog] = useState<string[]>([]);
+
+  function setTabAndPersist(t: TabName): void {
+    localStorage.setItem("blm_tab", t);
+    setTab(t);
+  }
 
   function addDriveLog(msg: string): void {
     const entry = `[${new Date().toLocaleTimeString()}] ${msg}`;
@@ -603,8 +611,15 @@ function App() {
 
       setStrengthSessions(savedStrengthSessions);
 
-      // Check if Google redirected back with a token in the URL hash.
-      const redirectSession = extractOAuthTokenFromUrl();
+      // Check if Google redirected back with a token (or error) in the URL hash.
+      let redirectSession: GoogleAuthSession | null = null;
+      try {
+        redirectSession = extractOAuthTokenFromUrl();
+      } catch (oauthErr) {
+        const msg = oauthErr instanceof Error ? oauthErr.message : String(oauthErr);
+        addDriveLog(`OAuth error on return: ${msg}`);
+        setDriveConnectError(msg);
+      }
       if (redirectSession) {
         try {
           addDriveLog("OAuth redirect detected. Fetching profile…");
@@ -796,7 +811,7 @@ function App() {
     setStrengthDate(session.sessionDate);
     setStrengthWeek(session.week);
     setStrengthNotes(session.notes ?? "");
-    setTab("strength");
+    setTabAndPersist("strength");
   }
 
   function cancelEditStrengthSession(): void {
@@ -819,7 +834,7 @@ function App() {
       problems: session.problems.map((problem) => ({ ...problem })),
     });
     setEntryDate(session.problems[0]?.climbedOn ?? todayIsoDate());
-    setTab("session");
+    setTabAndPersist("session");
   }
 
   function cancelEditSession(): void {
@@ -933,7 +948,7 @@ function App() {
       setDriveConnectError("Missing VITE_GOOGLE_CLIENT_ID. Configure it in Vercel and .env.local.");
       return;
     }
-    addDriveLog(`Redirecting to Google OAuth… origin=${window.location.origin}`);
+    // Navigate immediately — no state update before redirect to avoid blocking navigation
     initiateGoogleOAuthRedirect(googleClientId);
   }
 
@@ -1026,7 +1041,7 @@ function App() {
     setDraft(createSessionDraft(nextSettings));
     setEditingSessionId(undefined);
     setEditingSessionCreatedAt(undefined);
-    setTab("dashboard");
+    setTabAndPersist("dashboard");
   }
 
   if (loading) {
@@ -1094,23 +1109,23 @@ function App() {
       </header>
 
       <nav className="tab-nav" aria-label="Main tabs">
-        <button type="button" onClick={() => setTab("session")} className={tab === "session" ? "active" : ""}>
+        <button type="button" onClick={() => setTabAndPersist("session")} className={tab === "session" ? "active" : ""}>
           Session
         </button>
         <button
           type="button"
-          onClick={() => setTab("dashboard")}
+          onClick={() => setTabAndPersist("dashboard")}
           className={tab === "dashboard" ? "active" : ""}
         >
           Dashboard
         </button>
-        <button type="button" onClick={() => setTab("strength")} className={tab === "strength" ? "active" : ""}>
+        <button type="button" onClick={() => setTabAndPersist("strength")} className={tab === "strength" ? "active" : ""}>
           Strength
         </button>
-        <button type="button" onClick={() => setTab("settings")} className={tab === "settings" ? "active" : ""}>
+        <button type="button" onClick={() => setTabAndPersist("settings")} className={tab === "settings" ? "active" : ""}>
           Settings
         </button>
-        <button type="button" onClick={() => setTab("history")} className={tab === "history" ? "active" : ""}>
+        <button type="button" onClick={() => setTabAndPersist("history")} className={tab === "history" ? "active" : ""}>
           History
         </button>
       </nav>
