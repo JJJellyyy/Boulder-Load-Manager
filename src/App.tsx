@@ -93,6 +93,7 @@ const GOOGLE_SESSION_STORAGE_KEY = "blm_google_session";
 const DEFAULT_STRENGTH_TEMPLATE: StrengthExerciseTemplate = {
   id: "weighted-pull-up",
   name: "Weighted Pull-up",
+  oneRepMaxKg: 22.5,
   trainingMaxKg: 20,
   incrementKg: 2.5,
 };
@@ -100,6 +101,14 @@ const DEFAULT_STRENGTH_TEMPLATE: StrengthExerciseTemplate = {
 function roundToIncrement(value: number, increment: number): number {
   const safeIncrement = Math.max(0.5, increment);
   return Math.round(value / safeIncrement) * safeIncrement;
+}
+
+function getTemplateTrainingMax(template: StrengthExerciseTemplate): number {
+  if (typeof template.oneRepMaxKg === "number") {
+    return roundToIncrement(template.oneRepMaxKg * 0.9, template.incrementKg);
+  }
+
+  return template.trainingMaxKg;
 }
 
 function get531Prescription(week: FiveThreeOneWeek): Array<{ percentage: number; reps: string }> {
@@ -330,7 +339,7 @@ function App() {
   const [strengthDate, setStrengthDate] = useState<string>(todayIsoDate());
   const [strengthNotes, setStrengthNotes] = useState<string>("");
   const [templateName, setTemplateName] = useState<string>("");
-  const [templateTrainingMax, setTemplateTrainingMax] = useState<number>(20);
+  const [templateOneRepMax, setTemplateOneRepMax] = useState<number>(22.5);
   const [templateIncrement, setTemplateIncrement] = useState<number>(2.5);
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
@@ -648,7 +657,8 @@ function App() {
     const template: StrengthExerciseTemplate = {
       id: getId(),
       name,
-      trainingMaxKg: Math.max(1, templateTrainingMax),
+      oneRepMaxKg: Math.max(1, templateOneRepMax),
+      trainingMaxKg: roundToIncrement(Math.max(1, templateOneRepMax) * 0.9, Math.max(0.5, templateIncrement)),
       incrementKg: Math.max(0.5, templateIncrement),
     };
 
@@ -670,8 +680,8 @@ function App() {
     const exercises = strengthTemplates.map((template) => ({
       templateId: template.id,
       name: template.name,
-      trainingMaxKg: template.trainingMaxKg,
-      sets: build531Sets(template.trainingMaxKg, template.incrementKg, strengthWeek),
+      trainingMaxKg: getTemplateTrainingMax(template),
+      sets: build531Sets(getTemplateTrainingMax(template), template.incrementKg, strengthWeek),
     }));
 
     const session: StrengthSession = {
@@ -1247,7 +1257,7 @@ function App() {
           <article className="panel">
             <h2>5/3/1 Planner</h2>
             <p>
-              Training max is used directly per exercise. Week presets: 1 (5s), 2 (3s), 3 (5/3/1), 4 (deload).
+              Standard 5/3/1 math: training max = 90% of true 1RM. Week presets: 1 (5s), 2 (3s), 3 (5/3/1), 4 (deload).
             </p>
             <div className="field-grid">
               <label>
@@ -1284,8 +1294,8 @@ function App() {
                 <input value={templateName} onChange={(event) => setTemplateName(event.target.value)} placeholder="e.g. Front Squat" />
               </label>
               <label>
-                Training max (kg)
-                <NumberInput value={templateTrainingMax} min={1} step={0.5} onCommit={setTemplateTrainingMax} />
+                True 1RM (kg)
+                <NumberInput value={templateOneRepMax} min={1} step={0.5} onCommit={setTemplateOneRepMax} />
               </label>
               <label>
                 Plate increment (kg)
@@ -1301,6 +1311,7 @@ function App() {
                 <thead>
                   <tr>
                     <th>Exercise</th>
+                    <th>1RM</th>
                     <th>TM</th>
                     <th>Increment</th>
                     <th></th>
@@ -1310,7 +1321,8 @@ function App() {
                   {strengthTemplates.map((template) => (
                     <tr key={template.id}>
                       <td>{template.name}</td>
-                      <td>{template.trainingMaxKg.toFixed(1)} kg</td>
+                      <td>{(template.oneRepMaxKg ?? template.trainingMaxKg / 0.9).toFixed(1)} kg</td>
+                      <td>{getTemplateTrainingMax(template).toFixed(1)} kg</td>
                       <td>{template.incrementKg.toFixed(1)} kg</td>
                       <td>
                         <button type="button" className="danger" onClick={() => void removeStrengthTemplate(template.id)}>
@@ -1330,11 +1342,14 @@ function App() {
             {strengthTemplates.length > 0 && (
               <div className="panel-grid">
                 {strengthTemplates.map((template) => {
-                  const sets = build531Sets(template.trainingMaxKg, template.incrementKg, strengthWeek);
+                  const tm = getTemplateTrainingMax(template);
+                  const sets = build531Sets(tm, template.incrementKg, strengthWeek);
                   return (
                     <article key={`plan-${template.id}`} className="panel">
                       <h3>{template.name}</h3>
-                      <p>Training max: {template.trainingMaxKg.toFixed(1)} kg</p>
+                      <p>
+                        1RM: {(template.oneRepMaxKg ?? template.trainingMaxKg / 0.9).toFixed(1)} kg | TM (90%): {tm.toFixed(1)} kg
+                      </p>
                       <table>
                         <thead>
                           <tr>

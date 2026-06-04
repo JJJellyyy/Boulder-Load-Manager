@@ -150,6 +150,7 @@ export interface DriveBackupPayload {
 export interface StrengthExerciseTemplate {
   id: string;
   name: string;
+  oneRepMaxKg?: number;
   trainingMaxKg: number;
   incrementKg: number;
 }
