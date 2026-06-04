@@ -105,7 +105,7 @@ function roundToIncrement(value: number, increment: number): number {
 
 function getTemplateTrainingMax(template: StrengthExerciseTemplate): number {
   if (typeof template.oneRepMaxKg === "number") {
-    return roundToIncrement(template.oneRepMaxKg * 0.9, template.incrementKg);
+    return template.oneRepMaxKg * 0.9;
   }
 
   return template.trainingMaxKg;
