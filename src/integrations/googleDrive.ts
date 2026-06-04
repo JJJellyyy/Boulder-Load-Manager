@@ -2,7 +2,7 @@ import type { DriveBackupPayload } from "../types";
 
 const GOOGLE_IDENTITY_SCRIPT = "https://accounts.google.com/gsi/client";
 const DRIVE_SCOPE = [
-  "https://www.googleapis.com/auth/drive.file",
+  "https://www.googleapis.com/auth/drive.appdata",
   "openid",
   "email",
   "profile",
@@ -141,11 +141,11 @@ interface DriveFile {
 
 async function findBackupFileId(accessToken: string): Promise<string | undefined> {
   const query = encodeURIComponent(
-    `name='${BACKUP_FILE_NAME}' and trashed=false and 'root' in parents`,
+    `name='${BACKUP_FILE_NAME}' and trashed=false and 'appDataFolder' in parents`,
   );
 
   const response = await fetch(
-    `https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,name,modifiedTime)&pageSize=1`,
+    `https://www.googleapis.com/drive/v3/files?q=${query}&spaces=appDataFolder&fields=files(id,name,modifiedTime)&pageSize=1`,
     {
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -166,7 +166,7 @@ function createMultipartBody(payload: DriveBackupPayload): { body: string; bound
   const metadata = {
     name: BACKUP_FILE_NAME,
     mimeType: "application/json",
-    parents: ["root"],
+    parents: ["appDataFolder"],
   };
 
   const body = [
