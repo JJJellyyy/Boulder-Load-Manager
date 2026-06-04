@@ -151,6 +151,18 @@ function build531Sets(trainingMaxKg: number, incrementKg: number, week: FiveThre
   }));
 }
 
+function estimateOneRepMaxFromTopSet(
+  trainingMaxKg: number,
+  incrementKg: number,
+  week: FiveThreeOneWeek,
+): number {
+  const sets = build531Sets(trainingMaxKg, incrementKg, week);
+  const topSet = sets[sets.length - 1];
+  const repsFloor = Math.max(1, Number.parseInt(topSet.reps, 10) || 1);
+  const estimated = topSet.targetWeightKg * (1 + repsFloor / 30);
+  return roundToIncrement(estimated, incrementKg);
+}
+
 function getEwmaValue(snapshot: EWMASnapshot, windowDays: EWMADays): number {
   if (windowDays === 10) {
     return snapshot.ewma10;
@@ -1284,6 +1296,25 @@ function App() {
           </article>
 
           <article className="panel">
+            <h2>How 5/3/1 Works</h2>
+            <p>
+              5/3/1 was created by Jim Wendler as a simple long-term strength progression system built around submaximal work and steady progress.
+            </p>
+            <p>
+              Step 1: set a conservative training max at 90% of true 1RM.
+            </p>
+            <p>
+              Step 2: follow weekly waves (5s, 3s, 5/3/1, deload).
+            </p>
+            <p>
+              Step 3: aim to beat minimum reps on the final + set while keeping form strict.
+            </p>
+            <p>
+              Step 4: increase your training max next cycle and repeat.
+            </p>
+          </article>
+
+          <article className="panel">
             <h2>Exercise Templates</h2>
             <p>
               Start with Weighted Pull-up by default, then add your own lifts.
@@ -1313,24 +1344,30 @@ function App() {
                     <th>Exercise</th>
                     <th>1RM</th>
                     <th>TM</th>
+                    <th>Est. current 1RM</th>
                     <th>Increment</th>
                     <th></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {strengthTemplates.map((template) => (
-                    <tr key={template.id}>
-                      <td>{template.name}</td>
-                      <td>{(template.oneRepMaxKg ?? template.trainingMaxKg / 0.9).toFixed(1)} kg</td>
-                      <td>{getTemplateTrainingMax(template).toFixed(1)} kg</td>
-                      <td>{template.incrementKg.toFixed(1)} kg</td>
-                      <td>
-                        <button type="button" className="danger" onClick={() => void removeStrengthTemplate(template.id)}>
-                          Remove
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {strengthTemplates.map((template) => {
+                    const tm = getTemplateTrainingMax(template);
+                    const estimatedCurrentOneRepMax = estimateOneRepMaxFromTopSet(tm, template.incrementKg, strengthWeek);
+                    return (
+                      <tr key={template.id}>
+                        <td>{template.name}</td>
+                        <td>{(template.oneRepMaxKg ?? template.trainingMaxKg / 0.9).toFixed(1)} kg</td>
+                        <td>{tm.toFixed(1)} kg</td>
+                        <td>{estimatedCurrentOneRepMax.toFixed(1)} kg</td>
+                        <td>{template.incrementKg.toFixed(1)} kg</td>
+                        <td>
+                          <button type="button" className="danger" onClick={() => void removeStrengthTemplate(template.id)}>
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}
@@ -1344,11 +1381,12 @@ function App() {
                 {strengthTemplates.map((template) => {
                   const tm = getTemplateTrainingMax(template);
                   const sets = build531Sets(tm, template.incrementKg, strengthWeek);
+                  const estimatedCurrentOneRepMax = estimateOneRepMaxFromTopSet(tm, template.incrementKg, strengthWeek);
                   return (
                     <article key={`plan-${template.id}`} className="panel">
                       <h3>{template.name}</h3>
                       <p>
-                        1RM: {(template.oneRepMaxKg ?? template.trainingMaxKg / 0.9).toFixed(1)} kg | TM (90%): {tm.toFixed(1)} kg
+                        1RM: {(template.oneRepMaxKg ?? template.trainingMaxKg / 0.9).toFixed(1)} kg | TM (90%): {tm.toFixed(1)} kg | Estimated current 1RM: {estimatedCurrentOneRepMax.toFixed(1)} kg
                       </p>
                       <table>
                         <thead>
