@@ -333,6 +333,10 @@ function App() {
   const [sessions, setSessions] = useState<SessionInput[]>([]);
   const [strengthTemplates, setStrengthTemplates] = useState<StrengthExerciseTemplate[]>([]);
   const [strengthSessions, setStrengthSessions] = useState<StrengthSession[]>([]);
+  const [selectedStrengthTemplateId, setSelectedStrengthTemplateId] = useState<string | undefined>();
+  const [editingStrengthSessionId, setEditingStrengthSessionId] = useState<string | undefined>();
+  const [editingStrengthSessionCreatedAt, setEditingStrengthSessionCreatedAt] = useState<string | undefined>();
+  const [editingStrengthExercises, setEditingStrengthExercises] = useState<StrengthSession["exercises"]>([]);
   const [ewmaSnapshots, setEwmaSnapshots] = useState<Record<string, EWMASnapshot>>({});
   const [draft, setDraft] = useState<SessionDraft>(createSessionDraft(DEFAULT_SETTINGS));
   const [editingSessionId, setEditingSessionId] = useState<string | undefined>();
@@ -685,20 +689,22 @@ function App() {
   }
 
   async function saveStrengthProtocolSession(): Promise<void> {
-    if (strengthTemplates.length === 0) {
+    if (strengthTemplates.length === 0 && !editingStrengthSessionId) {
       return;
     }
 
-    const exercises = strengthTemplates.map((template) => ({
-      templateId: template.id,
-      name: template.name,
-      trainingMaxKg: getTemplateTrainingMax(template),
-      sets: build531Sets(getTemplateTrainingMax(template), template.incrementKg, strengthWeek),
-    }));
+    const exercises = editingStrengthSessionId
+      ? editingStrengthExercises
+      : strengthTemplates.map((template) => ({
+          templateId: template.id,
+          name: template.name,
+          trainingMaxKg: getTemplateTrainingMax(template),
+          sets: build531Sets(getTemplateTrainingMax(template), template.incrementKg, strengthWeek),
+        }));
 
     const session: StrengthSession = {
-      id: getId(),
-      createdAt: new Date().toISOString(),
+      id: editingStrengthSessionId ?? getId(),
+      createdAt: editingStrengthSessionCreatedAt ?? new Date().toISOString(),
       sessionDate: strengthDate,
       week: strengthWeek,
       exercises,
@@ -706,7 +712,34 @@ function App() {
     };
 
     await saveStrengthSession(session);
-    setStrengthSessions((previous) => [session, ...previous]);
+    setStrengthSessions((previous) => {
+      const updated = editingStrengthSessionId
+        ? previous.map((item) => (item.id === session.id ? session : item))
+        : [session, ...previous];
+      return updated.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    });
+    setStrengthNotes("");
+    setEditingStrengthSessionId(undefined);
+    setEditingStrengthSessionCreatedAt(undefined);
+    setEditingStrengthExercises([]);
+  }
+
+  function beginEditStrengthSession(session: StrengthSession): void {
+    setEditingStrengthSessionId(session.id);
+    setEditingStrengthSessionCreatedAt(session.createdAt);
+    setEditingStrengthExercises(session.exercises.map((exercise) => ({ ...exercise, sets: exercise.sets.map((set) => ({ ...set })) })));
+    setStrengthDate(session.sessionDate);
+    setStrengthWeek(session.week);
+    setStrengthNotes(session.notes ?? "");
+    setTab("strength");
+  }
+
+  function cancelEditStrengthSession(): void {
+    setEditingStrengthSessionId(undefined);
+    setEditingStrengthSessionCreatedAt(undefined);
+    setEditingStrengthExercises([]);
+    setStrengthDate(todayIsoDate());
+    setStrengthWeek(1);
     setStrengthNotes("");
   }
 
@@ -1271,6 +1304,11 @@ function App() {
             <p>
               Standard 5/3/1 math: training max = 90% of true 1RM. Week presets: 1 (5s), 2 (3s), 3 (5/3/1), 4 (deload).
             </p>
+            {editingStrengthSessionId && (
+              <p>
+                Editing strength session from history. Save will update that entry.
+              </p>
+            )}
             <div className="field-grid">
               <label>
                 Week
@@ -1290,9 +1328,16 @@ function App() {
               Notes
               <input value={strengthNotes} onChange={(event) => setStrengthNotes(event.target.value)} placeholder="Optional notes for this strength day" />
             </label>
-            <button type="button" onClick={() => void saveStrengthProtocolSession()} disabled={strengthTemplates.length === 0}>
-              Save Strength Session
-            </button>
+            <div className="metric-row">
+              <button type="button" onClick={() => void saveStrengthProtocolSession()} disabled={strengthTemplates.length === 0 && !editingStrengthSessionId}>
+                {editingStrengthSessionId ? "Update Strength Session" : "Save Strength Session"}
+              </button>
+              {editingStrengthSessionId && (
+                <button type="button" onClick={cancelEditStrengthSession}>
+                  Cancel Edit
+                </button>
+              )}
+            </div>
           </article>
 
           <article className="panel">
@@ -1355,7 +1400,18 @@ function App() {
                     const estimatedCurrentOneRepMax = estimateOneRepMaxFromTopSet(tm, template.incrementKg, strengthWeek);
                     return (
                       <tr key={template.id}>
-                        <td>{template.name}</td>
+                        <td>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSelectedStrengthTemplateId((previous) =>
+                                previous === template.id ? undefined : template.id,
+                              )
+                            }
+                          >
+                            {template.name}
+                          </button>
+                        </td>
                         <td>{(template.oneRepMaxKg ?? template.trainingMaxKg / 0.9).toFixed(1)} kg</td>
                         <td>{tm.toFixed(1)} kg</td>
                         <td>{estimatedCurrentOneRepMax.toFixed(1)} kg</td>
@@ -1374,20 +1430,22 @@ function App() {
           </article>
 
           <article className="panel full-width">
-            <h2>Calculated 5/3/1 Sets (Week {strengthWeek})</h2>
-            {strengthTemplates.length === 0 && <p>Add at least one exercise template.</p>}
-            {strengthTemplates.length > 0 && (
+            <h2>Next 4 Weeks Plan</h2>
+            {!selectedStrengthTemplateId && <p>Click an exercise name above to open its 2x2 four-week plan.</p>}
+            {selectedStrengthTemplateId && (
               <div className="panel-grid">
-                {strengthTemplates.map((template) => {
+                {[1, 2, 3, 4].map((week) => {
+                  const template = strengthTemplates.find((item) => item.id === selectedStrengthTemplateId);
+                  if (!template) {
+                    return null;
+                  }
+
                   const tm = getTemplateTrainingMax(template);
-                  const sets = build531Sets(tm, template.incrementKg, strengthWeek);
-                  const estimatedCurrentOneRepMax = estimateOneRepMaxFromTopSet(tm, template.incrementKg, strengthWeek);
+                  const sets = build531Sets(tm, template.incrementKg, week as FiveThreeOneWeek);
+
                   return (
-                    <article key={`plan-${template.id}`} className="panel">
-                      <h3>{template.name}</h3>
-                      <p>
-                        1RM: {(template.oneRepMaxKg ?? template.trainingMaxKg / 0.9).toFixed(1)} kg | TM (90%): {tm.toFixed(1)} kg | Estimated current 1RM: {estimatedCurrentOneRepMax.toFixed(1)} kg
-                      </p>
+                    <article key={`week-preview-${week}`} className="panel">
+                      <h3>{template.name} - Week {week}</h3>
                       <table>
                         <thead>
                           <tr>
@@ -1399,7 +1457,7 @@ function App() {
                         </thead>
                         <tbody>
                           {sets.map((set, index) => (
-                            <tr key={`${template.id}-set-${index}`}>
+                            <tr key={`week-${week}-set-${index}`}>
                               <td>{index + 1}</td>
                               <td>{Math.round(set.percentage * 100)}%</td>
                               <td>{set.reps}</td>
@@ -1412,35 +1470,6 @@ function App() {
                   );
                 })}
               </div>
-            )}
-          </article>
-
-          <article className="panel full-width">
-            <h2>Strength History</h2>
-            {strengthSessions.length === 0 && <p>No strength sessions saved yet.</p>}
-            {strengthSessions.length > 0 && (
-              <table>
-                <thead>
-                  <tr>
-                    <th>Entry Date</th>
-                    <th>Session Date</th>
-                    <th>Week</th>
-                    <th>Exercises</th>
-                    <th>Notes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {strengthSessions.map((session) => (
-                    <tr key={session.id}>
-                      <td>{new Date(session.createdAt).toLocaleString()}</td>
-                      <td>{session.sessionDate}</td>
-                      <td>{session.week}</td>
-                      <td>{session.exercises.length}</td>
-                      <td>{session.notes ?? "-"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
             )}
           </article>
         </section>
@@ -1763,7 +1792,7 @@ function App() {
       {tab === "history" && (
         <section className="panel-grid">
           <article className="panel full-width">
-            <h2>Session History</h2>
+            <h2>Bouldering History</h2>
             {sessions.length === 0 && <p>No sessions saved yet.</p>}
             {sessions.length > 0 && (
               <table>
@@ -1809,6 +1838,41 @@ function App() {
                       </tr>
                     );
                   })}
+                </tbody>
+              </table>
+            )}
+          </article>
+
+          <article className="panel full-width">
+            <h2>Strength History</h2>
+            {strengthSessions.length === 0 && <p>No strength sessions saved yet.</p>}
+            {strengthSessions.length > 0 && (
+              <table>
+                <thead>
+                  <tr>
+                    <th>Entry Date</th>
+                    <th>Session Date</th>
+                    <th>Week</th>
+                    <th>Exercises</th>
+                    <th>Notes</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {strengthSessions.map((session) => (
+                    <tr key={session.id}>
+                      <td>{new Date(session.createdAt).toLocaleString()}</td>
+                      <td>{session.sessionDate}</td>
+                      <td>{session.week}</td>
+                      <td>{session.exercises.length}</td>
+                      <td>{session.notes ?? "-"}</td>
+                      <td>
+                        <button type="button" onClick={() => beginEditStrengthSession(session)}>
+                          Edit
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             )}
