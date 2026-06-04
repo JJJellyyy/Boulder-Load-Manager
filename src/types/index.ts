@@ -159,7 +159,6 @@ export interface FiveThreeOneSet {
   percentage: number;
   reps: string;
   targetWeightKg: number;
-  actualReps?: number;
 }
 
 export interface StrengthExercisePlan {

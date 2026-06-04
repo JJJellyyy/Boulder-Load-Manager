@@ -350,7 +350,6 @@ function App() {
   const [strengthWeek, setStrengthWeek] = useState<FiveThreeOneWeek>(1);
   const [strengthDate, setStrengthDate] = useState<string>(todayIsoDate());
   const [strengthNotes, setStrengthNotes] = useState<string>("");
-  const [amrapByTemplate, setAmrapByTemplate] = useState<Record<string, number>>({});
   const [templateName, setTemplateName] = useState<string>("");
   const [templateOneRepMax, setTemplateOneRepMax] = useState<number>(22.5);
   const [templateIncrement, setTemplateIncrement] = useState<number>(2.5);
@@ -690,25 +689,12 @@ function App() {
       return;
     }
 
-    const exercises = strengthTemplates.map((template) => {
-      const baseSets = build531Sets(getTemplateTrainingMax(template), template.incrementKg, strengthWeek);
-      const topSetIndex = baseSets.length - 1;
-      const topSet = baseSets[topSetIndex];
-      const defaultReps = Math.max(1, Number.parseInt(topSet.reps, 10) || 1);
-      const loggedAmrap = Math.max(defaultReps, Math.round(amrapByTemplate[template.id] ?? defaultReps));
-      const sets = baseSets.map((set, index) =>
-        index === topSetIndex && set.reps.includes("+")
-          ? { ...set, actualReps: loggedAmrap }
-          : set,
-      );
-
-      return {
-        templateId: template.id,
-        name: template.name,
-        trainingMaxKg: getTemplateTrainingMax(template),
-        sets,
-      };
-    });
+    const exercises = strengthTemplates.map((template) => ({
+      templateId: template.id,
+      name: template.name,
+      trainingMaxKg: getTemplateTrainingMax(template),
+      sets: build531Sets(getTemplateTrainingMax(template), template.incrementKg, strengthWeek),
+    }));
 
     const session: StrengthSession = {
       id: getId(),
@@ -722,7 +708,6 @@ function App() {
     await saveStrengthSession(session);
     setStrengthSessions((previous) => [session, ...previous]);
     setStrengthNotes("");
-    setAmrapByTemplate({});
   }
 
   function beginEditSession(session: SessionInput): void {
@@ -1282,9 +1267,9 @@ function App() {
       {tab === "strength" && (
         <section className="panel-grid">
           <article className="panel">
-            <h2>5/3/1 Session Setup</h2>
+            <h2>5/3/1 Planner</h2>
             <p>
-              Pick your week and date first, then log AMRAP reps directly in the calculated sets section below.
+              Standard 5/3/1 math: training max = 90% of true 1RM. Week presets: 1 (5s), 2 (3s), 3 (5/3/1), 4 (deload).
             </p>
             <div className="field-grid">
               <label>
@@ -1305,6 +1290,9 @@ function App() {
               Notes
               <input value={strengthNotes} onChange={(event) => setStrengthNotes(event.target.value)} placeholder="Optional notes for this strength day" />
             </label>
+            <button type="button" onClick={() => void saveStrengthProtocolSession()} disabled={strengthTemplates.length === 0}>
+              Save Strength Session
+            </button>
           </article>
 
           <article className="panel">
@@ -1394,10 +1382,6 @@ function App() {
                   const tm = getTemplateTrainingMax(template);
                   const sets = build531Sets(tm, template.incrementKg, strengthWeek);
                   const estimatedCurrentOneRepMax = estimateOneRepMaxFromTopSet(tm, template.incrementKg, strengthWeek);
-                  const topSet = sets[sets.length - 1];
-                  const hasAmrap = topSet.reps.includes("+");
-                  const defaultAmrapReps = Math.max(1, Number.parseInt(topSet.reps, 10) || 1);
-                  const amrapInput = amrapByTemplate[template.id] ?? defaultAmrapReps;
                   return (
                     <article key={`plan-${template.id}`} className="panel">
                       <h3>{template.name}</h3>
@@ -1424,32 +1408,9 @@ function App() {
                           ))}
                         </tbody>
                       </table>
-                      {hasAmrap && (
-                        <label>
-                          AMRAP reps on top set ({Math.round(topSet.percentage * 100)}% at {topSet.targetWeightKg.toFixed(1)} kg)
-                          <NumberInput
-                            value={amrapInput}
-                            min={defaultAmrapReps}
-                            step={1}
-                            onCommit={(value) =>
-                              setAmrapByTemplate((previous) => ({
-                                ...previous,
-                                [template.id]: Math.max(defaultAmrapReps, Math.round(value)),
-                              }))
-                            }
-                          />
-                        </label>
-                      )}
                     </article>
                   );
                 })}
-              </div>
-            )}
-            {strengthTemplates.length > 0 && (
-              <div className="metric-row">
-                <button type="button" onClick={() => void saveStrengthProtocolSession()}>
-                  Log Session With AMRAP Reps
-                </button>
               </div>
             )}
           </article>
@@ -1465,36 +1426,19 @@ function App() {
                     <th>Session Date</th>
                     <th>Week</th>
                     <th>Exercises</th>
-                    <th>AMRAP</th>
                     <th>Notes</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {strengthSessions.map((session) => {
-                    const amrapSummary = session.exercises
-                      .map((exercise) => {
-                        const topSet = exercise.sets[exercise.sets.length - 1];
-                        if (!topSet.reps.includes("+")) {
-                          return undefined;
-                        }
-
-                        const performed = topSet.actualReps ?? Number.parseInt(topSet.reps, 10);
-                        return `${exercise.name}: ${performed}`;
-                      })
-                      .filter(Boolean)
-                      .join(" | ");
-
-                    return (
-                      <tr key={session.id}>
-                        <td>{new Date(session.createdAt).toLocaleString()}</td>
-                        <td>{session.sessionDate}</td>
-                        <td>{session.week}</td>
-                        <td>{session.exercises.length}</td>
-                        <td>{amrapSummary || "-"}</td>
-                        <td>{session.notes ?? "-"}</td>
-                      </tr>
-                    );
-                  })}
+                  {strengthSessions.map((session) => (
+                    <tr key={session.id}>
+                      <td>{new Date(session.createdAt).toLocaleString()}</td>
+                      <td>{session.sessionDate}</td>
+                      <td>{session.week}</td>
+                      <td>{session.exercises.length}</td>
+                      <td>{session.notes ?? "-"}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             )}
