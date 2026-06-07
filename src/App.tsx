@@ -794,6 +794,17 @@ function App() {
     });
   }, [settings]);
 
+  const stressPenaltyCurvePoints = useMemo(() => {
+    return Array.from({ length: 11 }, (_, index) => {
+      const stress = index;
+      const multiplier = calculateStressMultiplier(stress, settings);
+      return {
+        x: stress * 10,
+        y: (multiplier - 1) * 100,
+      };
+    });
+  }, [settings]);
+
   const displayGradeLabel = (grade: Grade): string => gradeToDisplay(grade, settings.gradeDisplayUnit);
   const gradeFromNumber = (value: number): Grade => {
     const bounded = Math.min(17, Math.max(0, Math.round(value)));
@@ -2255,6 +2266,48 @@ function App() {
                 />
               </label>
               <label>
+                Stress threshold (0-10 scale)
+                <NumberInput
+                  value={settings.model.recovery.stressPenalty.threshold}
+                  min={0}
+                  max={10}
+                  step={0.5}
+                  onCommit={(value) =>
+                    patchSettings((next) => {
+                      next.model.recovery.stressPenalty.threshold = value;
+                    })
+                  }
+                />
+              </label>
+              <label>
+                Stress penalty exponent
+                <NumberInput
+                  value={settings.model.recovery.stressPenalty.exponent}
+                  min={0.1}
+                  max={10}
+                  step={0.1}
+                  onCommit={(value) =>
+                    patchSettings((next) => {
+                      next.model.recovery.stressPenalty.exponent = value;
+                    })
+                  }
+                />
+              </label>
+              <label>
+                Max stress penalty
+                <NumberInput
+                  value={settings.model.recovery.stressPenalty.maxPenalty}
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  onCommit={(value) =>
+                    patchSettings((next) => {
+                      next.model.recovery.stressPenalty.maxPenalty = value;
+                    })
+                  }
+                />
+              </label>
+              <label>
                 ACWR acute window
                 <select
                   value={settings.model.acwr.acuteWindow}
@@ -2471,6 +2524,15 @@ function App() {
                 points={sleepPenaltyCurvePoints}
                 stroke="#9f2a2a"
                 xFormatter={(value) => `${value.toFixed(0)}%`}
+                yFormatter={(value) => `${value.toFixed(1)}%`}
+              />
+              <CurveChart
+                title="Stress Penalty Curve"
+                xLabel="Stress level (0-10)"
+                yLabel="Penalty %"
+                points={stressPenaltyCurvePoints}
+                stroke="#d97706"
+                xFormatter={(value) => (value / 10).toFixed(1)}
                 yFormatter={(value) => `${value.toFixed(1)}%`}
               />
             </div>
