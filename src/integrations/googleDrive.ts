@@ -22,9 +22,18 @@ export interface GoogleProfile {
 
 /** Redirect the browser to Google's OAuth consent page. Returns after redirect — caller never resumes. */
 export function initiateGoogleOAuthRedirect(clientId: string): void {
+  const redirectUri = window.location.origin + "/";
+  
+  // Log for debugging
+  console.log("OAuth Debug Info:", {
+    clientId: clientId.split(".")[0] + "...", // Hide full client ID
+    redirectUri,
+    currentUrl: window.location.href,
+  });
+  
   const params = new URLSearchParams({
     client_id: clientId,
-    redirect_uri: window.location.origin,
+    redirect_uri: redirectUri,
     response_type: "token",
     scope: DRIVE_SCOPE,
     prompt: "consent",
@@ -47,7 +56,15 @@ export function extractOAuthTokenFromUrl(): GoogleAuthSession | null {
   if (error) {
     // Clean up the URL
     window.history.replaceState(null, "", window.location.pathname + window.location.search);
-    throw new Error(`Google OAuth error: ${error} — ${params.get("error_description") ?? ""}`);
+    
+    const errorDescription = params.get("error_description") ?? "";
+    let helpText = "";
+    
+    if (error === "invalid_client") {
+      helpText = "\n\nTo fix this:\n1. Go to Google Cloud Console → APIs & Services → Credentials\n2. Edit your OAuth 2.0 Client ID (Web application)\n3. Ensure the Redirect URI is set to: " + window.location.origin + "/\n4. Check that JavaScript Origins includes: " + window.location.origin;
+    }
+    
+    throw new Error(`Google OAuth error: ${error} — ${errorDescription}${helpText}`);
   }
 
   const accessToken = params.get("access_token");
