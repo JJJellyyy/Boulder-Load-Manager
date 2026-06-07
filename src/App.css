@@ -529,6 +529,32 @@ td {
   margin-top: 0.35rem;
 }
 
+.grade-distribution {
+  margin-top: 1.2rem;
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.grade-distribution h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+  color: #333;
+}
+
+.grade-distribution p {
+  margin: 0 0 0.8rem;
+  font-size: 0.85rem;
+  color: #666;
+}
+
+.grade-dist-chart {
+  background: linear-gradient(180deg, rgba(139, 115, 85, 0.04), rgba(255, 255, 255, 0.6));
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
 @media (max-width: 900px) {
   .hero-stats,
   .panel-grid,

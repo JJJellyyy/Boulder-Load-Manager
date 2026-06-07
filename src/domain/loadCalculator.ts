@@ -8,6 +8,7 @@ import type {
   SessionInput,
   WallAngle,
 } from "../types";
+import { GRADES } from "../types";
 import { FONT_BY_GRADE } from "../types";
 const GRADES_ORDER = [
   "V0",
@@ -201,6 +202,27 @@ export function estimateSimpleLoad(
   const recovery = calculateSleepRecoveryMultiplier(sleepHours, settings);
   const stress = calculateStressMultiplier(stressLevel, settings);
   return count * gradeIntensity * speed * recovery * stress;
+}
+
+export function calculateGradeDistribution(
+  targetLoad: number,
+  durationMinutes: number,
+  sleepHours: number,
+  stressLevel: number,
+  settings: AppSettings,
+): Record<string, number> {
+  const speed = calculateSpeedMultiplier(1, durationMinutes, settings);
+  const recovery = calculateSleepRecoveryMultiplier(sleepHours, settings);
+  const stress = calculateStressMultiplier(stressLevel, settings);
+  const speedRecoveryStress = speed * recovery * stress;
+
+  const distribution: Record<string, number> = {};
+  for (const grade of GRADES) {
+    const gradeIntensity = calculateGradeIntensity(grade, settings);
+    const countForGrade = targetLoad / (gradeIntensity * speedRecoveryStress);
+    distribution[grade] = Math.round(countForGrade);
+  }
+  return distribution;
 }
 
 export interface HistoryPoint {

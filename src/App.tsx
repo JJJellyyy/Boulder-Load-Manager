@@ -25,6 +25,7 @@ import {
   calculateStressMultiplier,
   calculateSpeedMultiplier,
   calculateSessionLoad,
+  calculateGradeDistribution,
   gradeToDisplay,
   gradeToNumber,
   suggestedCapacityRange,
@@ -670,6 +671,11 @@ function App() {
     const predAcwr = prevChronic > 0 ? newAcute / prevChronic : 0;
     return { type: "grade" as const, numValue: 0, strValue: gradeToDisplay(bestGrade, settings.gradeDisplayUnit), unit: "", predAcwr, required };
   }, [ewmaSnapshots, settings, plannerSleep, plannerStress, plannerGrade, plannerCount, plannerDuration, plannerUnknown]);
+
+  const gradeDistribution = useMemo(() => {
+    if (!plannerResult || plannerResult.required <= 0) return {};
+    return calculateGradeDistribution(plannerResult.required, plannerDuration, plannerSleep, plannerStress, settings);
+  }, [plannerResult, plannerDuration, plannerSleep, plannerStress, settings]);
 
   const acwrExample = useMemo(() => {
     const dummyProblems = 24;
@@ -1743,6 +1749,46 @@ function App() {
                     </span>
                   </div>
                 </div>
+                
+                {plannerResult && Object.keys(gradeDistribution).length > 0 && (
+                  <div className="grade-distribution">
+                    <h3>Grade Distribution Options</h3>
+                    <p>To reach your ACWR target, you could climb:</p>
+                    <svg width="100%" height="250" className="grade-dist-chart">
+                      {(() => {
+                        const sortedGrades = GRADES.filter((g) => gradeDistribution[g] && gradeDistribution[g] > 0).sort(
+                          (a, b) => gradeToNumber(a) - gradeToNumber(b)
+                        );
+                        if (sortedGrades.length === 0) return null;
+                        
+                        const maxCount = Math.max(...sortedGrades.map((g) => gradeDistribution[g]));
+                        const chartHeight = 200;
+                        const chartPadding = 20;
+                        const barWidth = Math.max(30, Math.floor((window.innerWidth - 60) / sortedGrades.length * 0.8));
+                        const barSpacing = Math.floor((window.innerWidth - 60) / sortedGrades.length);
+                        
+                        return sortedGrades.map((grade, idx) => {
+                          const count = gradeDistribution[grade];
+                          const barHeight = (count / maxCount) * chartHeight;
+                          const x = chartPadding + idx * barSpacing + (barSpacing - barWidth) / 2;
+                          const y = chartPadding + chartHeight - barHeight;
+                          
+                          return (
+                            <g key={grade}>
+                              <rect x={x} y={y} width={barWidth} height={barHeight} fill="#8b7355" opacity="0.7" rx="4" />
+                              <text x={x + barWidth / 2} y={y - 5} textAnchor="middle" fontSize="12" fontWeight="bold" fill="#fff">
+                                {count}
+                              </text>
+                              <text x={x + barWidth / 2} y={chartPadding + chartHeight + 20} textAnchor="middle" fontSize="11" fill="#999">
+                                {gradeToDisplay(grade, settings.gradeDisplayUnit)}
+                              </text>
+                            </g>
+                          );
+                        });
+                      })()}
+                    </svg>
+                  </div>
+                )}
               </>
             )}
           </article>
@@ -2400,6 +2446,7 @@ function App() {
                     <th>Entry Date</th>
                     <th>Climbing Date</th>
                     <th>Problems</th>
+                    <th>Grades</th>
                     <th>Duration</th>
                     <th>Sleep</th>
                     <th>Stress</th>
@@ -2419,12 +2466,17 @@ function App() {
                         : climbingDates.length === 1
                           ? climbingDates[0]
                           : `${climbingDates[0]} to ${climbingDates[climbingDates.length - 1]}`;
+                    
+                    const gradesLabel = session.problems.length === 0 
+                      ? "-"
+                      : Array.from(new Set(session.problems.map((p) => gradeToDisplay(p.grade, settings.gradeDisplayUnit)))).sort().join(", ");
 
                     return (
                       <tr key={session.id}>
                         <td>{new Date(session.createdAt).toLocaleString()}</td>
                         <td>{climbingDateLabel}</td>
                         <td>{count}</td>
+                        <td>{gradesLabel}</td>
                         <td>{session.durationMinutes} min</td>
                         <td>{session.sleepHours.toFixed(1)} h</td>
                         <td>{session.stress}</td>
