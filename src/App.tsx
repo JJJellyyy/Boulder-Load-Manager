@@ -632,7 +632,7 @@ function App() {
       for (let i = 0; i < 50; i++) {
         const mid = (lo + hi) / 2;
         const load = estimateSimpleLoad(plannerCount, mid, plannerGrade, sleep, settings);
-        if (load > required) hi = mid; else lo = mid;
+        if (load > required) lo = mid; else hi = mid;
       }
       const solvedDuration = Math.round((lo + hi) / 2);
       const actualLoad = estimateSimpleLoad(plannerCount, solvedDuration, plannerGrade, sleep, settings);
