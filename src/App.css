@@ -275,6 +275,21 @@
   margin: 0 0 0.75rem;
 }
 
+.planner-inputs-row {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.planner-input-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
 /* ── CSV export/import ──────────────────────────────────────── */
 .import-row {
   display: flex;

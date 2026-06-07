@@ -478,6 +478,8 @@ function App() {
   const [plannerCount, setPlannerCount] = useState<number>(20);
   const [plannerDuration, setPlannerDuration] = useState<number>(120);
   const [plannerUnknown, setPlannerUnknown] = useState<"duration" | "grade" | "count">("duration");
+  const [plannerSleep, setPlannerSleep] = useState<number>(8);
+  const [plannerStress, setPlannerStress] = useState<number>(5);
 
   function setTabAndPersist(t: TabName): void {
     localStorage.setItem("blm_tab", t);
@@ -623,10 +625,9 @@ function App() {
     const acuteWindow = settings.model.acwr.acuteWindow;
     const required = solveTargetLoad(prevAcute, prevChronic, target, acuteWindow);
 
-    const sleep = draft.sleepHours;
+    const sleep = plannerSleep;
 
     if (plannerUnknown === "duration") {
-      // Binary search duration
       let lo = 5, hi = 600;
       for (let i = 0; i < 50; i++) {
         const mid = (lo + hi) / 2;
@@ -637,11 +638,10 @@ function App() {
       const actualLoad = estimateSimpleLoad(plannerCount, solvedDuration, plannerGrade, sleep, settings);
       const newAcute = (2 / (acuteWindow + 1)) * actualLoad + (1 - 2 / (acuteWindow + 1)) * prevAcute;
       const predAcwr = prevChronic > 0 ? newAcute / prevChronic : 0;
-      return { type: "duration" as const, value: solvedDuration, unit: "min", predAcwr, required };
+      return { type: "duration" as const, numValue: solvedDuration, strValue: "", unit: "min", predAcwr, required };
     }
 
     if (plannerUnknown === "count") {
-      // Binary search count
       let lo = 1, hi = 150;
       for (let i = 0; i < 50; i++) {
         const mid = Math.round((lo + hi) / 2);
@@ -652,11 +652,11 @@ function App() {
       const actualLoad = estimateSimpleLoad(solvedCount, plannerDuration, plannerGrade, sleep, settings);
       const newAcute = (2 / (acuteWindow + 1)) * actualLoad + (1 - 2 / (acuteWindow + 1)) * prevAcute;
       const predAcwr = prevChronic > 0 ? newAcute / prevChronic : 0;
-      return { type: "count" as const, value: solvedCount, unit: "problems", predAcwr, required };
+      return { type: "count" as const, numValue: solvedCount, strValue: "", unit: "problems", predAcwr, required };
     }
 
-    // Solve grade: enumerate all grades, pick closest
-    const grades = GRADES as unknown as Grade[];
+    // Solve grade
+    const grades = [...GRADES] as Grade[];
     let bestGrade = grades[0];
     let bestDiff = Infinity;
     for (const g of grades) {
@@ -667,8 +667,8 @@ function App() {
     const actualLoad = estimateSimpleLoad(plannerCount, plannerDuration, bestGrade, sleep, settings);
     const newAcute = (2 / (acuteWindow + 1)) * actualLoad + (1 - 2 / (acuteWindow + 1)) * prevAcute;
     const predAcwr = prevChronic > 0 ? newAcute / prevChronic : 0;
-    return { type: "grade" as const, value: gradeToDisplay(bestGrade, settings.gradeDisplayUnit), unit: "", predAcwr, required };
-  }, [ewmaSnapshots, settings, draft.sleepHours, plannerGrade, plannerCount, plannerDuration, plannerUnknown]);
+    return { type: "grade" as const, numValue: 0, strValue: gradeToDisplay(bestGrade, settings.gradeDisplayUnit), unit: "", predAcwr, required };
+  }, [ewmaSnapshots, settings, plannerSleep, plannerGrade, plannerCount, plannerDuration, plannerUnknown]);
 
   const acwrExample = useMemo(() => {
     const dummyProblems = 24;
@@ -1671,61 +1671,73 @@ function App() {
           {/* Next-session planner */}
           <article className="panel full-width">
             <h2>Next Session Planner</h2>
-            <p className="muted-hint">Fix two metrics and the algorithm calculates the third to reach your ACWR target of <strong>{settings.model.acwr.targetAcwr.toFixed(2)}</strong>. Uses today's sleep ({draft.sleepHours.toFixed(1)}h) from your draft.</p>
+            <p className="muted-hint">Fix two of the three session metrics and the algorithm calculates the third to reach your ACWR target of <strong>{settings.model.acwr.targetAcwr.toFixed(2)}</strong>.</p>
             {plannerResult === null ? (
               <p>Log at least one session to enable the planner.</p>
             ) : (
-              <div className="planner-grid">
-                <div className={`planner-field ${plannerUnknown === "duration" ? "planner-unknown" : ""}`}>
-                  <label>
-                    Duration (min)
-                    <button type="button" className="planner-toggle" onClick={() => setPlannerUnknown("duration")}>
-                      {plannerUnknown === "duration" ? "⟵ solving" : "solve this"}
-                    </button>
+              <>
+                <div className="planner-inputs-row">
+                  <label className="planner-input-label">
+                    Sleep (h)
+                    <NumberInput value={plannerSleep} min={0} max={14} step={0.5} onCommit={setPlannerSleep} />
                   </label>
-                  {plannerUnknown === "duration" ? (
-                    <span className="planner-solved">{plannerResult.type === "duration" ? plannerResult.value : "—"} min</span>
-                  ) : (
-                    <NumberInput value={plannerDuration} min={5} max={600} step={5} onCommit={setPlannerDuration} />
-                  )}
-                </div>
-                <div className={`planner-field ${plannerUnknown === "count" ? "planner-unknown" : ""}`}>
-                  <label>
-                    Boulder count
-                    <button type="button" className="planner-toggle" onClick={() => setPlannerUnknown("count")}>
-                      {plannerUnknown === "count" ? "⟵ solving" : "solve this"}
-                    </button>
+                  <label className="planner-input-label">
+                    Stress (1–{settings.stressScaleMax})
+                    <NumberInput value={plannerStress} min={1} max={settings.stressScaleMax} step={1} onCommit={setPlannerStress} />
                   </label>
-                  {plannerUnknown === "count" ? (
-                    <span className="planner-solved">{plannerResult.type === "count" ? plannerResult.value : "—"} problems</span>
-                  ) : (
-                    <NumberInput value={plannerCount} min={1} max={150} step={1} onCommit={setPlannerCount} />
-                  )}
                 </div>
-                <div className={`planner-field ${plannerUnknown === "grade" ? "planner-unknown" : ""}`}>
-                  <label>
-                    Avg grade
-                    <button type="button" className="planner-toggle" onClick={() => setPlannerUnknown("grade")}>
-                      {plannerUnknown === "grade" ? "⟵ solving" : "solve this"}
-                    </button>
-                  </label>
-                  {plannerUnknown === "grade" ? (
-                    <span className="planner-solved">{plannerResult.type === "grade" ? plannerResult.value : "—"}</span>
-                  ) : (
-                    <select value={plannerGrade} onChange={(e) => setPlannerGrade(e.target.value as Grade)}>
-                      {GRADES.map((g) => (
-                        <option key={g} value={g}>{gradeToDisplay(g, settings.gradeDisplayUnit)}</option>
-                      ))}
-                    </select>
-                  )}
+                <div className="planner-grid">
+                  <div className={`planner-field ${plannerUnknown === "duration" ? "planner-unknown" : ""}`}>
+                    <label>
+                      Duration (min)
+                      <button type="button" className="planner-toggle" onClick={() => setPlannerUnknown("duration")}>
+                        {plannerUnknown === "duration" ? "⟵ solving" : "solve this"}
+                      </button>
+                    </label>
+                    {plannerUnknown === "duration" ? (
+                      <span className="planner-solved">{plannerResult.numValue} min</span>
+                    ) : (
+                      <NumberInput value={plannerDuration} min={5} max={600} step={5} onCommit={setPlannerDuration} />
+                    )}
+                  </div>
+                  <div className={`planner-field ${plannerUnknown === "count" ? "planner-unknown" : ""}`}>
+                    <label>
+                      Boulder count
+                      <button type="button" className="planner-toggle" onClick={() => setPlannerUnknown("count")}>
+                        {plannerUnknown === "count" ? "⟵ solving" : "solve this"}
+                      </button>
+                    </label>
+                    {plannerUnknown === "count" ? (
+                      <span className="planner-solved">{plannerResult.numValue} problems</span>
+                    ) : (
+                      <NumberInput value={plannerCount} min={1} max={150} step={1} onCommit={setPlannerCount} />
+                    )}
+                  </div>
+                  <div className={`planner-field ${plannerUnknown === "grade" ? "planner-unknown" : ""}`}>
+                    <label>
+                      Avg grade
+                      <button type="button" className="planner-toggle" onClick={() => setPlannerUnknown("grade")}>
+                        {plannerUnknown === "grade" ? "⟵ solving" : "solve this"}
+                      </button>
+                    </label>
+                    {plannerUnknown === "grade" ? (
+                      <span className="planner-solved">{plannerResult.strValue}</span>
+                    ) : (
+                      <select value={plannerGrade} onChange={(e) => setPlannerGrade(e.target.value as Grade)}>
+                        {GRADES.map((g) => (
+                          <option key={g} value={g}>{gradeToDisplay(g, settings.gradeDisplayUnit)}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                  <div className="planner-result">
+                    <span className="planner-acwr-label">Predicted ACWR</span>
+                    <span className={`planner-acwr-value ${getAcwrZone(plannerResult.predAcwr, settings.model.acwr.lowThreshold, settings.model.acwr.highThreshold).toLowerCase().replace(" ", "-")}`}>
+                      {plannerResult.predAcwr.toFixed(2)}
+                    </span>
+                  </div>
                 </div>
-                <div className="planner-result">
-                  <span className="planner-acwr-label">Predicted ACWR</span>
-                  <span className={`planner-acwr-value ${getAcwrZone(plannerResult.predAcwr, settings.model.acwr.lowThreshold, settings.model.acwr.highThreshold).toLowerCase().replace(" ", "-")}`}>
-                    {plannerResult.predAcwr.toFixed(2)}
-                  </span>
-                </div>
-              </div>
+              </>
             )}
           </article>
 
