@@ -1159,6 +1159,12 @@ function App() {
     URL.revokeObjectURL(url);
   }
 
+  function exportBackupAsJSON(): void {
+    const payload = getBackupPayload();
+    const json = JSON.stringify(payload, null, 2);
+    downloadBlob(json, `boulder-load-manager-backup-${new Date().toISOString().slice(0,10)}.json`, "application/json");
+  }
+
   function exportBouldersToCSV(): void {
     const header = "sessionId,createdAt,durationMinutes,sleepHours,stress,motivation,problemId,count,grade,holdType,wallAngle,climbedOn";
     const rows: string[] = [header];
@@ -1187,6 +1193,44 @@ function App() {
       }
     }
     downloadBlob(rows.join("\n"), `strength-sessions-${new Date().toISOString().slice(0,10)}.csv`, "text/csv");
+  }
+
+  async function importBackupFromJSON(file: File): Promise<void> {
+    try {
+      const text = await file.text();
+      const payload = JSON.parse(text) as DriveBackupPayload;
+      
+      await clearSessions();
+      await clearEwmaSnapshots();
+      await clearStrengthTemplates();
+      await clearStrengthSessions();
+
+      const restoredSettings = clampSettings(payload.settings ?? DEFAULT_SETTINGS);
+      await saveSettings(restoredSettings);
+      for (const s of payload.sessions) { await saveSession(s); }
+      for (const snap of payload.ewmaSnapshots ?? []) { await saveEwmaSnapshot(snap); }
+      for (const t of payload.strengthTemplates ?? [DEFAULT_STRENGTH_TEMPLATE]) { await saveStrengthTemplate(t); }
+      for (const ss of payload.strengthSessions ?? []) { await saveStrengthSession(ss); }
+
+      const [sessionsFromDb, snapshotsFromDb, templatesFromDb, strengthSessionsFromDb] = await Promise.all([
+        loadSessions(), loadEwmaSnapshots(), loadStrengthTemplates(), loadStrengthSessions(),
+      ]);
+      const mappedSnapshots = snapshotsFromDb.reduce<Record<string, EWMASnapshot>>((acc, snap) => {
+        acc[snap.key] = snap;
+        return acc;
+      }, {});
+
+      setSettings(restoredSettings);
+      setSessions(sessionsFromDb);
+      setEwmaSnapshots(mappedSnapshots);
+      setStrengthTemplates(templatesFromDb.length > 0 ? templatesFromDb : [DEFAULT_STRENGTH_TEMPLATE]);
+      setStrengthSessions(strengthSessionsFromDb);
+      setDraft(createSessionDraft(restoredSettings));
+      addDriveLog("Backup imported successfully!");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addDriveLog(`Error importing backup: ${msg}`);
+    }
   }
 
   async function importBouldersFromCSV(file: File): Promise<void> {
@@ -2308,29 +2352,43 @@ function App() {
             </button>
 
             <h3>Data Export / Import</h3>
-            <p>Download your data as CSV files, or re-import them to restore sessions.</p>
+            <p>Download complete backup as JSON, or re-import to restore all data (same format as Google Drive).</p>
             <div className="metric-row">
-              <button type="button" onClick={exportBouldersToCSV}>⬇ Export Bouldering CSV</button>
-              <button type="button" onClick={exportStrengthToCSV}>⬇ Export Strength CSV</button>
-            </div>
-            <div className="import-row">
+              <button type="button" onClick={exportBackupAsJSON}>⬇ Export Full Backup (JSON)</button>
               <label className="file-import-label">
-                ⬆ Import Bouldering CSV
-                <input type="file" accept=".csv" className="hidden-file-input" onChange={(e) => {
+                ⬆ Import Full Backup (JSON)
+                <input type="file" accept=".json" className="hidden-file-input" onChange={(e) => {
                   const file = e.target.files?.[0];
-                  if (file) void importBouldersFromCSV(file);
-                  e.target.value = "";
-                }} />
-              </label>
-              <label className="file-import-label">
-                ⬆ Import Strength CSV
-                <input type="file" accept=".csv" className="hidden-file-input" onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) void importStrengthFromCSV(file);
+                  if (file) void importBackupFromJSON(file);
                   e.target.value = "";
                 }} />
               </label>
             </div>
+            <details>
+              <summary>Legacy CSV Export (for reference)</summary>
+              <div className="metric-row">
+                <button type="button" onClick={exportBouldersToCSV}>⬇ Export Bouldering CSV</button>
+                <button type="button" onClick={exportStrengthToCSV}>⬇ Export Strength CSV</button>
+              </div>
+              <div className="import-row">
+                <label className="file-import-label">
+                  ⬆ Import Bouldering CSV
+                  <input type="file" accept=".csv" className="hidden-file-input" onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) void importBouldersFromCSV(file);
+                    e.target.value = "";
+                  }} />
+                </label>
+                <label className="file-import-label">
+                  ⬆ Import Strength CSV
+                  <input type="file" accept=".csv" className="hidden-file-input" onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) void importStrengthFromCSV(file);
+                    e.target.value = "";
+                  }} />
+                </label>
+              </div>
+            </details>
 
             <h3>Google Drive Sync</h3>
             <p>{driveStatus}</p>
