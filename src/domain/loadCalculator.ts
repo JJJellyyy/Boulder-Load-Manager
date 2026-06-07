@@ -100,7 +100,7 @@ export function calculateSleepRecoveryMultiplier(actualSleepHours: number, setti
   const personalMax = Math.max(0.1, settings.model.recovery.personalMaxSleepHours);
   const deficit = clamp((personalMax - actualSleepHours) / personalMax, 0, 1);
   const penalty = settings.model.recovery.sleepPenalty.maxPenalty * Math.pow(deficit, settings.model.recovery.sleepPenalty.exponent);
-  return 1 - clamp(penalty, 0, settings.model.recovery.sleepPenalty.maxPenalty);
+  return 1 + clamp(penalty, 0, settings.model.recovery.sleepPenalty.maxPenalty);
 }
 
 function getBoulderKey(holdType: HoldType, wallAngle: WallAngle): string {
