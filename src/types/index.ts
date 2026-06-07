@@ -118,6 +118,7 @@ export interface LoadModelConfig {
     chronicWindow: EWMADays;
     lowThreshold: number;
     highThreshold: number;
+    targetAcwr: number;
   };
   showAllCombinations: boolean;
 }
@@ -154,6 +155,8 @@ export interface StrengthExerciseTemplate {
   trainingMaxKg: number;
   incrementKg: number;
   amrapPerformedByWeek?: Partial<Record<FiveThreeOneWeek, number>>;
+  cycleNumber?: number;
+  cycleHistory?: { cycle: number; oneRepMaxKg: number }[];
 }
 
 export interface FiveThreeOneSet {
@@ -176,4 +179,5 @@ export interface StrengthSession {
   week: FiveThreeOneWeek;
   exercises: StrengthExercisePlan[];
   notes?: string;
+  cycleNumber?: number;
 }

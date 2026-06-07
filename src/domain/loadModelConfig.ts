@@ -29,6 +29,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
       chronicWindow: 25,
       lowThreshold: 0.8,
       highThreshold: 1.2,
+      targetAcwr: 1.0,
     },
     showAllCombinations: true,
   },
@@ -113,6 +114,7 @@ export function clampSettings(input: AppSettings): AppSettings {
       acwr: {
         ...DEFAULT_SETTINGS.model.acwr,
         ...(incoming.model?.acwr ?? {}),
+        targetAcwr: incoming.model?.acwr?.targetAcwr ?? DEFAULT_SETTINGS.model.acwr.targetAcwr,
       },
       showAllCombinations:
         incoming.model?.showAllCombinations ?? DEFAULT_SETTINGS.model.showAllCombinations,

@@ -27,6 +27,10 @@ import {
   gradeToDisplay,
   gradeToNumber,
   suggestedCapacityRange,
+  solveTargetLoad,
+  estimateSimpleLoad,
+  buildSessionHistory,
+  type HistoryPoint,
 } from "./domain/loadCalculator";
 import {
   initiateGoogleOAuthRedirect,
@@ -218,9 +222,12 @@ function CurveChart({
   yFormatter = (value) => value.toFixed(2),
   yLogarithmic = false,
 }: CurveChartProps) {
-  const width = 320;
-  const height = 180;
-  const pad = 22;
+  const width = 340;
+  const height = 200;
+  const padLeft = 52;
+  const padRight = 16;
+  const padTop = 12;
+  const padBottom = 44;
 
   if (points.length < 2) {
     return (
@@ -233,37 +240,149 @@ function CurveChart({
 
   const transformY = (v: number) => (yLogarithmic ? Math.log(Math.max(v, 0.001)) : v);
 
-  const minX = Math.min(...points.map((point) => point.x));
-  const maxX = Math.max(...points.map((point) => point.x));
-  const minYT = Math.min(...points.map((point) => transformY(point.y)));
-  const maxYT = Math.max(...points.map((point) => transformY(point.y)));
-  const minY = Math.min(...points.map((point) => point.y));
-  const maxY = Math.max(...points.map((point) => point.y));
+  const minX = Math.min(...points.map((p) => p.x));
+  const maxX = Math.max(...points.map((p) => p.x));
+  const minYT = Math.min(...points.map((p) => transformY(p.y)));
+  const maxYT = Math.max(...points.map((p) => transformY(p.y)));
+  const minY = Math.min(...points.map((p) => p.y));
+  const maxY = Math.max(...points.map((p) => p.y));
 
   const spanX = Math.max(0.0001, maxX - minX);
   const spanYT = Math.max(0.0001, maxYT - minYT);
 
-  const polyline = points
-    .map((point) => {
-      const x = pad + ((point.x - minX) / spanX) * (width - pad * 2);
-      const yt = transformY(point.y);
-      const y = height - pad - ((yt - minYT) / spanYT) * (height - pad * 2);
-      return `${x},${y}`;
-    })
-    .join(" ");
+  const toSvgX = (x: number) => padLeft + ((x - minX) / spanX) * (width - padLeft - padRight);
+  const toSvgY = (y: number) => height - padBottom - ((transformY(y) - minYT) / spanYT) * (height - padTop - padBottom);
+
+  const polyline = points.map((p) => `${toSvgX(p.x)},${toSvgY(p.y)}`).join(" ");
+
+  // X axis ticks: 5 evenly spaced
+  const xTicks = Array.from({ length: 5 }, (_, i) => minX + (i / 4) * spanX);
+  // Y axis ticks: 5 evenly spaced (in original scale, not log)
+  const yTicks = Array.from({ length: 5 }, (_, i) => minY + (i / 4) * (maxY - minY));
 
   return (
     <article className="curve-card">
       <h4>{title}{yLogarithmic && <span className="log-badge"> (log scale)</span>}</h4>
       <svg className="curve-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={title}>
-        <line x1={pad} y1={height - pad} x2={width - pad} y2={height - pad} className="curve-axis" />
-        <line x1={pad} y1={pad} x2={pad} y2={height - pad} className="curve-axis" />
-        <polyline points={polyline} fill="none" stroke={stroke} strokeWidth="3" strokeLinecap="round" />
+        {/* Grid lines */}
+        {yTicks.map((v, i) => (
+          <line key={i} x1={padLeft} y1={toSvgY(v)} x2={width - padRight} y2={toSvgY(v)}
+            stroke="currentColor" strokeOpacity="0.08" strokeWidth="1" />
+        ))}
+        {/* Axes */}
+        <line x1={padLeft} y1={height - padBottom} x2={width - padRight} y2={height - padBottom} className="curve-axis" />
+        <line x1={padLeft} y1={padTop} x2={padLeft} y2={height - padBottom} className="curve-axis" />
+        {/* X ticks + labels */}
+        {xTicks.map((v, i) => (
+          <g key={i}>
+            <line x1={toSvgX(v)} y1={height - padBottom} x2={toSvgX(v)} y2={height - padBottom + 4} className="curve-axis" />
+            <text x={toSvgX(v)} y={height - padBottom + 14} textAnchor="middle" fontSize="9" fill="currentColor" opacity="0.6">{xFormatter(v)}</text>
+          </g>
+        ))}
+        {/* Y ticks + labels */}
+        {yTicks.map((v, i) => (
+          <g key={i}>
+            <line x1={padLeft - 4} y1={toSvgY(v)} x2={padLeft} y2={toSvgY(v)} className="curve-axis" />
+            <text x={padLeft - 6} y={toSvgY(v) + 3} textAnchor="end" fontSize="9" fill="currentColor" opacity="0.6">{yFormatter(v)}</text>
+          </g>
+        ))}
+        {/* Axis labels */}
+        <text x={padLeft + (width - padLeft - padRight) / 2} y={height - 4} textAnchor="middle" fontSize="10" fill="currentColor" opacity="0.75">{xLabel}</text>
+        <text x={10} y={padTop + (height - padTop - padBottom) / 2} textAnchor="middle" fontSize="10" fill="currentColor" opacity="0.75"
+          transform={`rotate(-90, 10, ${padTop + (height - padTop - padBottom) / 2})`}>{yLabel}</text>
+        {/* Curve */}
+        <polyline points={polyline} fill="none" stroke={stroke} strokeWidth="2.5" strokeLinecap="round" />
       </svg>
-      <p className="curve-caption">
-        {xLabel}: {xFormatter(minX)} to {xFormatter(maxX)} | {yLabel}: {yFormatter(minY)} to {yFormatter(maxY)}
-      </p>
     </article>
+  );
+}
+
+function AcwrHistoryChart({
+  points,
+  lowThreshold,
+  highThreshold,
+  targetAcwr,
+}: {
+  points: HistoryPoint[];
+  lowThreshold: number;
+  highThreshold: number;
+  targetAcwr: number;
+}) {
+  const width = 600;
+  const height = 220;
+  const padL = 44;
+  const padR = 16;
+  const padT = 16;
+  const padB = 48;
+  const chartW = width - padL - padR;
+  const chartH = height - padT - padB;
+
+  const maxAcwr = Math.max(2, ...points.map((p) => p.acwr)) * 1.05;
+  const toX = (i: number) => padL + (i / (points.length - 1)) * chartW;
+  const toY = (v: number) => padT + chartH - (v / maxAcwr) * chartH;
+
+  const acwrLine = points.map((p, i) => `${toX(i)},${toY(p.acwr)}`).join(" ");
+
+  // Colored zone rectangles
+  const greenY1 = toY(highThreshold);
+  const greenY2 = toY(lowThreshold);
+  const yellowLoY1 = toY(lowThreshold);
+  const yellowHiY2 = toY(highThreshold);
+
+  // X-axis date ticks: show ~5 labels
+  const tickIndices: number[] = [];
+  const step = Math.max(1, Math.floor(points.length / 5));
+  for (let i = 0; i < points.length; i += step) tickIndices.push(i);
+  if (tickIndices[tickIndices.length - 1] !== points.length - 1) tickIndices.push(points.length - 1);
+
+  // Y-axis ticks: 0, 0.5, 1.0, 1.5, 2.0 (up to maxAcwr)
+  const yTicks = [0, 0.5, 1.0, 1.5, 2.0].filter((v) => v <= maxAcwr);
+
+  return (
+    <svg className="acwr-history-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="ACWR history">
+      {/* Zone bands */}
+      <rect x={padL} y={greenY1} width={chartW} height={greenY2 - greenY1} fill="#22c55e" opacity="0.12" />
+      <rect x={padL} y={toY(maxAcwr)} width={chartW} height={Math.max(0, yellowLoY1 - toY(maxAcwr) - (chartH - yellowHiY2))} fill="transparent" />
+      {/* Low zone (below low threshold) */}
+      <rect x={padL} y={toY(lowThreshold)} width={chartW} height={Math.max(0, padT + chartH - toY(lowThreshold))} fill="#f59e0b" opacity="0.10" />
+      {/* High zone (above high threshold) */}
+      <rect x={padL} y={padT} width={chartW} height={Math.max(0, toY(highThreshold) - padT)} fill="#ef4444" opacity="0.10" />
+      {/* Grid + threshold lines */}
+      {yTicks.map((v) => (
+        <line key={v} x1={padL} y1={toY(v)} x2={padL + chartW} y2={toY(v)} stroke="currentColor" strokeOpacity="0.1" strokeWidth="1" />
+      ))}
+      <line x1={padL} y1={toY(lowThreshold)} x2={padL + chartW} y2={toY(lowThreshold)} stroke="#f59e0b" strokeOpacity="0.5" strokeWidth="1" strokeDasharray="4,3" />
+      <line x1={padL} y1={toY(highThreshold)} x2={padL + chartW} y2={toY(highThreshold)} stroke="#ef4444" strokeOpacity="0.5" strokeWidth="1" strokeDasharray="4,3" />
+      <line x1={padL} y1={toY(targetAcwr)} x2={padL + chartW} y2={toY(targetAcwr)} stroke="#3b82f6" strokeOpacity="0.7" strokeWidth="1.5" strokeDasharray="6,3" />
+      {/* Axes */}
+      <line x1={padL} y1={padT} x2={padL} y2={padT + chartH} stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
+      <line x1={padL} y1={padT + chartH} x2={padL + chartW} y2={padT + chartH} stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
+      {/* Y ticks */}
+      {yTicks.map((v) => (
+        <text key={v} x={padL - 6} y={toY(v) + 4} textAnchor="end" fontSize="10" fill="currentColor" opacity="0.6">{v.toFixed(1)}</text>
+      ))}
+      {/* X ticks */}
+      {tickIndices.map((i) => (
+        <text key={i} x={toX(i)} y={padT + chartH + 14} textAnchor="middle" fontSize="9" fill="currentColor" opacity="0.6">
+          {points[i].date.slice(5)}
+        </text>
+      ))}
+      {/* ACWR line */}
+      <polyline points={acwrLine} fill="none" stroke="#6366f1" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+      {/* Dots for each session */}
+      {points.map((p, i) => (
+        <circle key={i} cx={toX(i)} cy={toY(p.acwr)} r="3" fill="#6366f1" opacity="0.75" />
+      ))}
+      {/* Axis labels */}
+      <text x={padL + chartW / 2} y={height - 4} textAnchor="middle" fontSize="10" fill="currentColor" opacity="0.7">Date</text>
+      <text x={10} y={padT + chartH / 2} textAnchor="middle" fontSize="10" fill="currentColor" opacity="0.7"
+        transform={`rotate(-90, 10, ${padT + chartH / 2})`}>ACWR</text>
+      {/* Legend */}
+      <line x1={padL + chartW - 110} y1={12} x2={padL + chartW - 95} y2={12} stroke="#6366f1" strokeWidth="2" />
+      <text x={padL + chartW - 92} y={16} fontSize="9" fill="currentColor" opacity="0.7">ACWR</text>
+      <line x1={padL + chartW - 60} y1={12} x2={padL + chartW - 45} y2={12} stroke="#3b82f6" strokeWidth="1.5" strokeDasharray="4,2" />
+      <text x={padL + chartW - 42} y={16} fontSize="9" fill="currentColor" opacity="0.7">Target</text>
+    </svg>
   );
 }
 
@@ -352,6 +471,13 @@ function App() {
   const [driveStatus, setDriveStatus] = useState<string>("Google Drive not connected.");
   const [driveConnectError, setDriveConnectError] = useState<string | undefined>(undefined);
   const [driveLog, setDriveLog] = useState<string[]>([]);
+  // Dashboard history graph
+  const [historyRange, setHistoryRange] = useState<30 | 90 | null>(30);
+  // Next-session planner
+  const [plannerGrade, setPlannerGrade] = useState<Grade>("V5");
+  const [plannerCount, setPlannerCount] = useState<number>(20);
+  const [plannerDuration, setPlannerDuration] = useState<number>(120);
+  const [plannerUnknown, setPlannerUnknown] = useState<"duration" | "grade" | "count">("duration");
 
   function setTabAndPersist(t: TabName): void {
     localStorage.setItem("blm_tab", t);
@@ -469,6 +595,80 @@ function App() {
 
     return { avgAcwr, highRiskCount, goldilocksCount };
   }, [acwrRows]);
+
+  // Overall ACWR: sum all acute / sum all chronic across every boulder type snapshot
+  const overallAcwr = useMemo(() => {
+    const snapshots = Object.values(ewmaSnapshots);
+    if (snapshots.length === 0) return null;
+    const sumAcute = snapshots.reduce((s, snap) => s + getEwmaValue(snap, settings.model.acwr.acuteWindow), 0);
+    const sumChronic = snapshots.reduce((s, snap) => s + getEwmaValue(snap, settings.model.acwr.chronicWindow), 0);
+    return sumChronic > 0 ? sumAcute / sumChronic : null;
+  }, [ewmaSnapshots, settings.model.acwr]);
+
+  // Session history for ACWR+Load graph (combined across all types)
+  const sessionHistory = useMemo(
+    () => buildSessionHistory(sessions, settings, historyRange),
+    [sessions, settings, historyRange],
+  );
+
+  // Next-session planner: compute required load + solve unknown metric
+  const plannerResult = useMemo(() => {
+    const snapshots = Object.values(ewmaSnapshots);
+    if (snapshots.length === 0) return null;
+    const prevAcute = snapshots.reduce((s, snap) => s + getEwmaValue(snap, settings.model.acwr.acuteWindow), 0);
+    const prevChronic = snapshots.reduce((s, snap) => s + getEwmaValue(snap, settings.model.acwr.chronicWindow), 0);
+    if (prevChronic === 0) return null;
+
+    const target = settings.model.acwr.targetAcwr;
+    const acuteWindow = settings.model.acwr.acuteWindow;
+    const required = solveTargetLoad(prevAcute, prevChronic, target, acuteWindow);
+
+    const sleep = draft.sleepHours;
+
+    if (plannerUnknown === "duration") {
+      // Binary search duration
+      let lo = 5, hi = 600;
+      for (let i = 0; i < 50; i++) {
+        const mid = (lo + hi) / 2;
+        const load = estimateSimpleLoad(plannerCount, mid, plannerGrade, sleep, settings);
+        if (load > required) hi = mid; else lo = mid;
+      }
+      const solvedDuration = Math.round((lo + hi) / 2);
+      const actualLoad = estimateSimpleLoad(plannerCount, solvedDuration, plannerGrade, sleep, settings);
+      const newAcute = (2 / (acuteWindow + 1)) * actualLoad + (1 - 2 / (acuteWindow + 1)) * prevAcute;
+      const predAcwr = prevChronic > 0 ? newAcute / prevChronic : 0;
+      return { type: "duration" as const, value: solvedDuration, unit: "min", predAcwr, required };
+    }
+
+    if (plannerUnknown === "count") {
+      // Binary search count
+      let lo = 1, hi = 150;
+      for (let i = 0; i < 50; i++) {
+        const mid = Math.round((lo + hi) / 2);
+        const load = estimateSimpleLoad(mid, plannerDuration, plannerGrade, sleep, settings);
+        if (load > required) hi = mid; else lo = mid;
+      }
+      const solvedCount = Math.round((lo + hi) / 2);
+      const actualLoad = estimateSimpleLoad(solvedCount, plannerDuration, plannerGrade, sleep, settings);
+      const newAcute = (2 / (acuteWindow + 1)) * actualLoad + (1 - 2 / (acuteWindow + 1)) * prevAcute;
+      const predAcwr = prevChronic > 0 ? newAcute / prevChronic : 0;
+      return { type: "count" as const, value: solvedCount, unit: "problems", predAcwr, required };
+    }
+
+    // Solve grade: enumerate all grades, pick closest
+    const grades = GRADES as unknown as Grade[];
+    let bestGrade = grades[0];
+    let bestDiff = Infinity;
+    for (const g of grades) {
+      const load = estimateSimpleLoad(plannerCount, plannerDuration, g, sleep, settings);
+      const diff = Math.abs(load - required);
+      if (diff < bestDiff) { bestDiff = diff; bestGrade = g; }
+    }
+    const actualLoad = estimateSimpleLoad(plannerCount, plannerDuration, bestGrade, sleep, settings);
+    const newAcute = (2 / (acuteWindow + 1)) * actualLoad + (1 - 2 / (acuteWindow + 1)) * prevAcute;
+    const predAcwr = prevChronic > 0 ? newAcute / prevChronic : 0;
+    return { type: "grade" as const, value: gradeToDisplay(bestGrade, settings.gradeDisplayUnit), unit: "", predAcwr, required };
+  }, [ewmaSnapshots, settings, draft.sleepHours, plannerGrade, plannerCount, plannerDuration, plannerUnknown]);
 
   const acwrExample = useMemo(() => {
     const dummyProblems = 24;
@@ -730,6 +930,23 @@ function App() {
     setStrengthTemplates((previous) => previous.filter((item) => item.id !== templateId));
   }
 
+  async function advanceCycle(templateId: string): Promise<void> {
+    const template = strengthTemplates.find((t) => t.id === templateId);
+    if (!template) return;
+    const currentCycle = template.cycleNumber ?? 1;
+    const currentOneRepMax = template.oneRepMaxKg ?? template.trainingMaxKg / 0.9;
+    const newOneRepMax = currentOneRepMax + template.incrementKg;
+    const updated: StrengthExerciseTemplate = {
+      ...template,
+      cycleNumber: currentCycle + 1,
+      cycleHistory: [...(template.cycleHistory ?? []), { cycle: currentCycle, oneRepMaxKg: currentOneRepMax }],
+      oneRepMaxKg: newOneRepMax,
+      trainingMaxKg: newOneRepMax * 0.9,
+    };
+    await saveStrengthTemplate(updated);
+    setStrengthTemplates((prev) => prev.map((t) => (t.id === templateId ? updated : t)));
+  }
+
   function getTemplateWeekKey(templateId: string, week: FiveThreeOneWeek): string {
     return `${templateId}-${week}`;
   }
@@ -789,6 +1006,7 @@ function App() {
       week: strengthWeek,
       exercises,
       notes: strengthNotes.trim() || undefined,
+      cycleNumber: strengthTemplates[0]?.cycleNumber ?? 1,
     };
 
     await saveStrengthSession(session);
@@ -907,6 +1125,100 @@ function App() {
       strengthTemplates,
       strengthSessions,
     };
+  }
+
+  function downloadBlob(content: string, filename: string, mime: string): void {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportBouldersToCSV(): void {
+    const header = "sessionId,createdAt,durationMinutes,sleepHours,stress,motivation,problemId,count,grade,holdType,wallAngle,climbedOn";
+    const rows: string[] = [header];
+    for (const s of sessions) {
+      if (s.problems.length === 0) {
+        rows.push([s.id, s.createdAt, s.durationMinutes, s.sleepHours, s.stress, s.motivation, "", "", "", "", "", ""].join(","));
+      } else {
+        for (const p of s.problems) {
+          rows.push([s.id, s.createdAt, s.durationMinutes, s.sleepHours, s.stress, s.motivation, p.id, p.count, p.grade, p.holdType, p.wallAngle, p.climbedOn ?? ""].join(","));
+        }
+      }
+    }
+    downloadBlob(rows.join("\n"), `bouldering-sessions-${new Date().toISOString().slice(0,10)}.csv`, "text/csv");
+  }
+
+  function exportStrengthToCSV(): void {
+    const header = "sessionId,createdAt,sessionDate,week,cycleNumber,exerciseName,templateId,trainingMaxKg,setIndex,percentage,reps,targetWeightKg,amrapPerformed";
+    const rows: string[] = [header];
+    for (const s of strengthSessions) {
+      const cycle = s.cycleNumber ?? 1;
+      for (const ex of s.exercises) {
+        ex.sets.forEach((set, idx) => {
+          const amrap = (strengthTemplates.find((t) => t.id === ex.templateId)?.amrapPerformedByWeek?.[s.week]) ?? "";
+          rows.push([s.id, s.createdAt, s.sessionDate, s.week, cycle, ex.name, ex.templateId, ex.trainingMaxKg, idx + 1, set.percentage, set.reps, set.targetWeightKg, idx === ex.sets.length - 1 ? amrap : ""].join(","));
+        });
+      }
+    }
+    downloadBlob(rows.join("\n"), `strength-sessions-${new Date().toISOString().slice(0,10)}.csv`, "text/csv");
+  }
+
+  async function importBouldersFromCSV(file: File): Promise<void> {
+    const text = await file.text();
+    const lines = text.split("\n").filter((l) => l.trim());
+    if (lines.length < 2) return;
+    // Group by sessionId
+    const sessionMap = new Map<string, SessionInput>();
+    for (const line of lines.slice(1)) {
+      const cols = line.split(",");
+      const [sid, createdAt, durationMinutes, sleepHours, stress, motivation, problemId, count, grade, holdType, wallAngle, climbedOn] = cols;
+      if (!sid) continue;
+      if (!sessionMap.has(sid)) {
+        sessionMap.set(sid, { id: sid, createdAt, durationMinutes: Number(durationMinutes), sleepHours: Number(sleepHours), stress: Number(stress), motivation: Number(motivation), problems: [] });
+      }
+      if (problemId && grade) {
+        sessionMap.get(sid)!.problems.push({ id: problemId, count: Number(count), grade: grade as Grade, holdType: holdType as HoldType, wallAngle: wallAngle as WallAngle, climbedOn: climbedOn || undefined });
+      }
+    }
+    for (const session of sessionMap.values()) {
+      await saveSession(session);
+    }
+    const updated = await loadSessions();
+    setSessions(updated.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+  }
+
+  async function importStrengthFromCSV(file: File): Promise<void> {
+    const text = await file.text();
+    const lines = text.split("\n").filter((l) => l.trim());
+    if (lines.length < 2) return;
+    const sessionMap = new Map<string, StrengthSession>();
+    for (const line of lines.slice(1)) {
+      const cols = line.split(",");
+      const [sid, createdAt, sessionDate, week, cycleNumber, exerciseName, templateId, trainingMaxKg, setIndex, percentage, reps, targetWeightKg, amrapPerformed] = cols;
+      if (!sid) continue;
+      if (!sessionMap.has(sid)) {
+        sessionMap.set(sid, { id: sid, createdAt, sessionDate, week: Number(week) as FiveThreeOneWeek, cycleNumber: Number(cycleNumber) || 1, exercises: [], notes: undefined });
+      }
+      const sess = sessionMap.get(sid)!;
+      let ex = sess.exercises.find((e) => e.templateId === templateId);
+      if (!ex) {
+        ex = { templateId, name: exerciseName, trainingMaxKg: Number(trainingMaxKg), sets: [] };
+        sess.exercises.push(ex);
+      }
+      ex.sets[Number(setIndex) - 1] = { percentage: Number(percentage), reps, targetWeightKg: Number(targetWeightKg) };
+      if (amrapPerformed && Number(setIndex) === ex.sets.length + 1) {
+        // Will be added to amrap on template if needed
+      }
+    }
+    for (const session of sessionMap.values()) {
+      await saveStrengthSession(session);
+    }
+    const updated = await loadStrengthSessions();
+    setStrengthSessions(updated);
   }
 
   async function applyDriveBackup(token: string): Promise<void> {
@@ -1315,8 +1627,110 @@ function App() {
 
       {tab === "dashboard" && (
         <section className="panel-grid">
+          {/* Overall ACWR stat */}
+          <article className="panel">
+            <h2>Overall ACWR</h2>
+            {overallAcwr === null ? (
+              <p>Save a session to see your overall ACWR.</p>
+            ) : (
+              <div className="overall-acwr-stat">
+                <span className={`acwr-big ${getAcwrZone(overallAcwr, settings.model.acwr.lowThreshold, settings.model.acwr.highThreshold).toLowerCase().replace(" ", "-")}`}>
+                  {overallAcwr.toFixed(2)}
+                </span>
+                <span className="acwr-zone-label">{getAcwrZone(overallAcwr, settings.model.acwr.lowThreshold, settings.model.acwr.highThreshold)}</span>
+                <p className="acwr-range-hint">Goldilocks: {settings.model.acwr.lowThreshold.toFixed(2)} – {settings.model.acwr.highThreshold.toFixed(2)} | Target: {settings.model.acwr.targetAcwr.toFixed(2)}</p>
+              </div>
+            )}
+          </article>
+
+          {/* ACWR + Load history graph */}
           <article className="panel full-width">
-            <h2>ACWR by Boulder Type (Main Metric)</h2>
+            <div className="panel-header-row">
+              <h2>ACWR History</h2>
+              <select className="range-select" value={historyRange ?? "all"} onChange={(e) => {
+                const v = e.target.value;
+                setHistoryRange(v === "all" ? null : (Number(v) as 30 | 90));
+              }}>
+                <option value={30}>Last 30 days</option>
+                <option value={90}>Last 90 days</option>
+                <option value="all">All time</option>
+              </select>
+            </div>
+            {sessionHistory.length < 2 ? (
+              <p>Log at least 2 sessions to see the history graph.</p>
+            ) : (
+              <AcwrHistoryChart
+                points={sessionHistory}
+                lowThreshold={settings.model.acwr.lowThreshold}
+                highThreshold={settings.model.acwr.highThreshold}
+                targetAcwr={settings.model.acwr.targetAcwr}
+              />
+            )}
+          </article>
+
+          {/* Next-session planner */}
+          <article className="panel full-width">
+            <h2>Next Session Planner</h2>
+            <p className="muted-hint">Fix two metrics and the algorithm calculates the third to reach your ACWR target of <strong>{settings.model.acwr.targetAcwr.toFixed(2)}</strong>. Uses today's sleep ({draft.sleepHours.toFixed(1)}h) from your draft.</p>
+            {plannerResult === null ? (
+              <p>Log at least one session to enable the planner.</p>
+            ) : (
+              <div className="planner-grid">
+                <div className={`planner-field ${plannerUnknown === "duration" ? "planner-unknown" : ""}`}>
+                  <label>
+                    Duration (min)
+                    <button type="button" className="planner-toggle" onClick={() => setPlannerUnknown("duration")}>
+                      {plannerUnknown === "duration" ? "⟵ solving" : "solve this"}
+                    </button>
+                  </label>
+                  {plannerUnknown === "duration" ? (
+                    <span className="planner-solved">{plannerResult.type === "duration" ? plannerResult.value : "—"} min</span>
+                  ) : (
+                    <NumberInput value={plannerDuration} min={5} max={600} step={5} onCommit={setPlannerDuration} />
+                  )}
+                </div>
+                <div className={`planner-field ${plannerUnknown === "count" ? "planner-unknown" : ""}`}>
+                  <label>
+                    Boulder count
+                    <button type="button" className="planner-toggle" onClick={() => setPlannerUnknown("count")}>
+                      {plannerUnknown === "count" ? "⟵ solving" : "solve this"}
+                    </button>
+                  </label>
+                  {plannerUnknown === "count" ? (
+                    <span className="planner-solved">{plannerResult.type === "count" ? plannerResult.value : "—"} problems</span>
+                  ) : (
+                    <NumberInput value={plannerCount} min={1} max={150} step={1} onCommit={setPlannerCount} />
+                  )}
+                </div>
+                <div className={`planner-field ${plannerUnknown === "grade" ? "planner-unknown" : ""}`}>
+                  <label>
+                    Avg grade
+                    <button type="button" className="planner-toggle" onClick={() => setPlannerUnknown("grade")}>
+                      {plannerUnknown === "grade" ? "⟵ solving" : "solve this"}
+                    </button>
+                  </label>
+                  {plannerUnknown === "grade" ? (
+                    <span className="planner-solved">{plannerResult.type === "grade" ? plannerResult.value : "—"}</span>
+                  ) : (
+                    <select value={plannerGrade} onChange={(e) => setPlannerGrade(e.target.value as Grade)}>
+                      {GRADES.map((g) => (
+                        <option key={g} value={g}>{gradeToDisplay(g, settings.gradeDisplayUnit)}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+                <div className="planner-result">
+                  <span className="planner-acwr-label">Predicted ACWR</span>
+                  <span className={`planner-acwr-value ${getAcwrZone(plannerResult.predAcwr, settings.model.acwr.lowThreshold, settings.model.acwr.highThreshold).toLowerCase().replace(" ", "-")}`}>
+                    {plannerResult.predAcwr.toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            )}
+          </article>
+
+          <article className="panel full-width">
+            <h2>ACWR by Boulder Type</h2>
             <p>
               Acute window: {settings.model.acwr.acuteWindow} | Chronic window: {settings.model.acwr.chronicWindow}
               {" "}| Goldilocks: {settings.model.acwr.lowThreshold.toFixed(2)} to {settings.model.acwr.highThreshold.toFixed(2)}
@@ -1445,6 +1859,7 @@ function App() {
                 <thead>
                   <tr>
                     <th>Exercise</th>
+                    <th>Cycle</th>
                     <th>1RM</th>
                     <th>TM</th>
                     <th>Est. current 1RM</th>
@@ -1456,6 +1871,7 @@ function App() {
                   {strengthTemplates.map((template) => {
                     const tm = getTemplateTrainingMax(template);
                     const estimatedCurrentOneRepMax = estimateOneRepMaxFromTopSet(tm, template.incrementKg, strengthWeek);
+                    const cycle = template.cycleNumber ?? 1;
                     return (
                       <tr key={template.id}>
                         <td>
@@ -1481,11 +1897,26 @@ function App() {
                             {template.name}
                           </button>
                         </td>
+                        <td>
+                          <span className="cycle-badge">Cycle {cycle}</span>
+                        </td>
                         <td>{(template.oneRepMaxKg ?? template.trainingMaxKg / 0.9).toFixed(1)} kg</td>
                         <td>{tm.toFixed(1)} kg</td>
                         <td>{estimatedCurrentOneRepMax.toFixed(1)} kg</td>
                         <td>{template.incrementKg.toFixed(1)} kg</td>
                         <td>
+                          <button
+                            type="button"
+                            className="advance-cycle-btn"
+                            title={`Start cycle ${cycle + 1}: 1RM → ${((template.oneRepMaxKg ?? template.trainingMaxKg / 0.9) + template.incrementKg).toFixed(1)} kg`}
+                            onClick={() => {
+                              if (window.confirm(`Advance ${template.name} to Cycle ${cycle + 1}?\n\n1RM: ${(template.oneRepMaxKg ?? template.trainingMaxKg / 0.9).toFixed(1)} kg → ${((template.oneRepMaxKg ?? template.trainingMaxKg / 0.9) + template.incrementKg).toFixed(1)} kg (+${template.incrementKg} kg)`)) {
+                                void advanceCycle(template.id);
+                              }
+                            }}
+                          >
+                            ↑ Advance cycle
+                          </button>
                           <button type="button" className="danger" onClick={() => void removeStrengthTemplate(template.id)}>
                             Remove
                           </button>
@@ -1768,6 +2199,22 @@ function App() {
                 />
               </label>
               <label>
+                ACWR planner target
+                <input
+                  type="range"
+                  min={0.8}
+                  max={1.3}
+                  step={0.05}
+                  value={settings.model.acwr.targetAcwr}
+                  onChange={(e) =>
+                    patchSettings((next) => {
+                      next.model.acwr.targetAcwr = Number(e.target.value);
+                    })
+                  }
+                />
+                <span className="range-value">{settings.model.acwr.targetAcwr.toFixed(2)}</span>
+              </label>
+              <label>
                 Sleep max hours
                 <NumberInput
                   value={settings.model.recovery.personalMaxSleepHours}
@@ -1785,6 +2232,31 @@ function App() {
             <button type="button" className="danger" onClick={() => setSettings(DEFAULT_SETTINGS)}>
               ↺ Revert All Settings To Default
             </button>
+
+            <h3>Data Export / Import</h3>
+            <p>Download your data as CSV files, or re-import them to restore sessions.</p>
+            <div className="metric-row">
+              <button type="button" onClick={exportBouldersToCSV}>⬇ Export Bouldering CSV</button>
+              <button type="button" onClick={exportStrengthToCSV}>⬇ Export Strength CSV</button>
+            </div>
+            <div className="import-row">
+              <label className="file-import-label">
+                ⬆ Import Bouldering CSV
+                <input type="file" accept=".csv" className="hidden-file-input" onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void importBouldersFromCSV(file);
+                  e.target.value = "";
+                }} />
+              </label>
+              <label className="file-import-label">
+                ⬆ Import Strength CSV
+                <input type="file" accept=".csv" className="hidden-file-input" onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void importStrengthFromCSV(file);
+                  e.target.value = "";
+                }} />
+              </label>
+            </div>
 
             <h3>Google Drive Sync</h3>
             <p>{driveStatus}</p>
@@ -1961,6 +2433,7 @@ function App() {
                   <tr>
                     <th>Entry Date</th>
                     <th>Session Date</th>
+                    <th>Cycle</th>
                     <th>Week</th>
                     <th>Exercises</th>
                     <th>Notes</th>
@@ -1972,6 +2445,7 @@ function App() {
                     <tr key={session.id}>
                       <td>{new Date(session.createdAt).toLocaleString()}</td>
                       <td>{session.sessionDate}</td>
+                      <td><span className="cycle-badge">Cycle {session.cycleNumber ?? 1}</span></td>
                       <td>{session.week}</td>
                       <td>{session.exercises.length}</td>
                       <td>{session.notes ?? "-"}</td>

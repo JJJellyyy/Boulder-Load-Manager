@@ -89,21 +89,11 @@ export function calculateSpeedMultiplier(totalProblems: number, durationMinutes:
   const safeDuration = Math.max(1, durationMinutes);
   const minutesPerBoulder = safeDuration / safeProblems;
 
-  // Fixed exponential pace model:
-  // 10 min per boulder => x0 intensity contribution, 1 min per boulder => x5.
-  // Keep 10-4 mostly flat, then ramp steeply at 3-1.
+  // Smooth cubic ramp: near-zero above 4 min/boulder, steep below 2 min/boulder.
+  // progress = 0 at 4+ min, 1 at 1 min. Cubic gives dramatic sub-2-min penalty.
   const clampedMinutes = clamp(minutesPerBoulder, 1, 10);
-  let value: number;
-
-  if (clampedMinutes >= 4) {
-    const progress = (10 - clampedMinutes) / 6;
-    value = 0.5 * Math.pow(progress, 2);
-  } else {
-    const progress = (4 - clampedMinutes) / 3;
-    value = 0.5 + 4.5 * Math.pow(progress, 2.6);
-  }
-
-  return clamp(value, 0, 5);
+  const progress = clamp((4 - clampedMinutes) / 3, 0, 1);
+  return clamp(5 * Math.pow(progress, 3), 0, 5);
 }
 
 export function calculateSleepRecoveryMultiplier(actualSleepHours: number, settings: AppSettings): number {
@@ -166,6 +156,87 @@ export function calculateSessionLoad(session: SessionInput, settings: AppSetting
     recoveryMultiplier,
     byBoulderType,
   };
+}
+
+/**
+ * Given current EWMA state and a target ACWR, compute what session load is needed.
+ * Formula: newAcute = α * load + (1-α) * prevAcute = targetAcwr * prevChronic
+ * → load = (targetAcwr * prevChronic - (1-α) * prevAcute) / α
+ */
+export function solveTargetLoad(
+  prevAcute: number,
+  prevChronic: number,
+  targetAcwr: number,
+  acuteWindow: number,
+): number {
+  const alpha = 2 / (acuteWindow + 1);
+  const required = (targetAcwr * prevChronic - (1 - alpha) * prevAcute) / alpha;
+  return Math.max(0, required);
+}
+
+/**
+ * Simple session-load estimator for a uniform set of problems.
+ * Used by the planner solver.
+ */
+export function estimateSimpleLoad(
+  count: number,
+  durationMinutes: number,
+  grade: Grade,
+  sleepHours: number,
+  settings: AppSettings,
+): number {
+  const gradeIntensity = calculateGradeIntensity(grade, settings);
+  const speed = calculateSpeedMultiplier(count, durationMinutes, settings);
+  const recovery = calculateSleepRecoveryMultiplier(sleepHours, settings);
+  return count * gradeIntensity * speed * recovery;
+}
+
+export interface HistoryPoint {
+  date: string;
+  load: number;
+  acute: number;
+  chronic: number;
+  acwr: number;
+}
+
+/**
+ * Build a time-ordered list of EWMA/ACWR values from raw sessions.
+ * Returns all sessions computed from scratch (full history needed for accurate EWMA),
+ * filtered to the last `daysBack` days for display.
+ */
+export function buildSessionHistory(
+  sessions: SessionInput[],
+  settings: AppSettings,
+  daysBack: number | null,
+): HistoryPoint[] {
+  if (sessions.length === 0) return [];
+
+  const sorted = [...sessions].sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+  );
+
+  const acuteWindow = settings.model.acwr.acuteWindow;
+  const chronicWindow = settings.model.acwr.chronicWindow;
+  const acuteAlpha = 2 / (acuteWindow + 1);
+  const chronicAlpha = 2 / (chronicWindow + 1);
+
+  let acute = 0;
+  let chronic = 0;
+  const all: HistoryPoint[] = [];
+
+  for (const session of sorted) {
+    const load = calculateSessionLoad(session, settings).totalLoad;
+    acute = acuteAlpha * load + (1 - acuteAlpha) * acute;
+    chronic = chronicAlpha * load + (1 - chronicAlpha) * chronic;
+    const acwr = chronic > 0 ? acute / chronic : 0;
+    all.push({ date: session.createdAt.slice(0, 10), load, acute, chronic, acwr });
+  }
+
+  if (daysBack === null) return all;
+
+  const cutoffMs = Date.now() - daysBack * 24 * 60 * 60 * 1000;
+  const cutoffDate = new Date(cutoffMs).toISOString().slice(0, 10);
+  return all.filter((point) => point.date >= cutoffDate);
 }
 
 export function suggestedCapacityRange(climberMaxGrade: Grade): { min: number; max: number } {

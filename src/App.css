@@ -141,6 +141,197 @@
   word-break: break-all;
 }
 
+/* ── Overall ACWR stat ─────────────────────────────────────── */
+.overall-acwr-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.5rem 0;
+}
+
+.acwr-big {
+  font-size: 3.5rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.acwr-big.goldilocks { color: #22c55e; }
+.acwr-big.high-risk  { color: #ef4444; }
+.acwr-big.detraining { color: #f59e0b; }
+
+.acwr-zone-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+
+.acwr-range-hint {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin: 0;
+}
+
+/* ── ACWR history graph ─────────────────────────────────────── */
+.acwr-history-svg {
+  width: 100%;
+  max-width: 700px;
+  display: block;
+  margin: 0.5rem auto 0;
+}
+
+.panel-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.range-select {
+  font-size: 0.85rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface, #fff);
+}
+
+/* ── Next-session planner ───────────────────────────────────── */
+.planner-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+.planner-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.planner-field label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.planner-unknown {
+  background: rgba(99, 102, 241, 0.06);
+  border-radius: 8px;
+  padding: 0.5rem;
+}
+
+.planner-toggle {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.4rem;
+  background: transparent;
+  border: 1px solid var(--muted, #999);
+  border-radius: 4px;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.planner-solved {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: #6366f1;
+}
+
+.planner-result {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  padding: 0.5rem;
+  background: rgba(0,0,0,0.03);
+  border-radius: 8px;
+}
+
+.planner-acwr-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.planner-acwr-value {
+  font-size: 2rem;
+  font-weight: 700;
+}
+
+.planner-acwr-value.goldilocks { color: #22c55e; }
+.planner-acwr-value.high-risk  { color: #ef4444; }
+.planner-acwr-value.detraining { color: #f59e0b; }
+
+.muted-hint {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 0 0 0.75rem;
+}
+
+/* ── CSV export/import ──────────────────────────────────────── */
+.import-row {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+.file-import-label {
+  display: inline-block;
+  padding: 0.45rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  background: var(--surface, #fff);
+}
+
+.file-import-label:hover {
+  background: rgba(0,0,0,0.04);
+}
+
+.hidden-file-input {
+  display: none;
+}
+
+.range-value {
+  font-weight: 600;
+  margin-left: 0.5rem;
+}
+
+/* ── 5/3/1 cycle badges ─────────────────────────────────────── */
+.cycle-badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  background: rgba(99, 102, 241, 0.12);
+  color: #4f46e5;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.advance-cycle-btn {
+  font-size: 0.78rem;
+  padding: 0.2rem 0.5rem;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid #22c55e;
+  color: #15803d;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-right: 0.4rem;
+}
+
+.advance-cycle-btn:hover {
+  background: rgba(34, 197, 94, 0.2);
+}
+
 .eyebrow {
   text-transform: uppercase;
   letter-spacing: 0.12em;
