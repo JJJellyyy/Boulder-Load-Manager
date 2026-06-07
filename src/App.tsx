@@ -657,15 +657,22 @@ function App() {
       return { type: "count" as const, numValue: solvedCount, strValue: "", unit: "problems", predAcwr, required };
     }
 
-    // Solve grade
+    // Solve grade - pick grade that produces target ACWR
     const grades = [...GRADES] as Grade[];
     let bestGrade = grades[0];
-    let bestDiff = Infinity;
+    let bestAcwrDiff = Infinity;
+    
     for (const g of grades) {
       const load = estimateSimpleLoad(plannerCount, plannerDuration, g, sleep, plannerStress, settings);
-      const diff = Math.abs(load - required);
-      if (diff < bestDiff) { bestDiff = diff; bestGrade = g; }
+      const newAcute = (2 / (acuteWindow + 1)) * load + (1 - 2 / (acuteWindow + 1)) * prevAcute;
+      const acwr = prevChronic > 0 ? newAcute / prevChronic : 0;
+      const acwrDiff = Math.abs(acwr - target);
+      if (acwrDiff < bestAcwrDiff) {
+        bestAcwrDiff = acwrDiff;
+        bestGrade = g;
+      }
     }
+    
     const actualLoad = estimateSimpleLoad(plannerCount, plannerDuration, bestGrade, sleep, plannerStress, settings);
     const newAcute = (2 / (acuteWindow + 1)) * actualLoad + (1 - 2 / (acuteWindow + 1)) * prevAcute;
     const predAcwr = prevChronic > 0 ? newAcute / prevChronic : 0;
