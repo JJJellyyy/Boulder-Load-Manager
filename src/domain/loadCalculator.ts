@@ -30,33 +30,34 @@ const GRADES_ORDER = [
   "V17",
 ] as const;
 
-const FONT_TO_V: Record<string, Grade> = {
+const FONT_TO_V: Record<string, Grade | string> = {
   "4": "V0",
   "5": "V1",
-  "5+": "V2",
-  "6A": "V3",
-  "6A+": "V4",
-  "6B": "V5",
-  "6B+": "V6",
-  "6C": "V7",
-  "6C+": "V8",
-  "7A": "V9",
-  "7A+": "V10",
-  "7B": "V11",
-  "7B+": "V12",
-  "7C": "V13",
-  "7C+": "V14",
-  "8A": "V15",
-  "8A+": "V16",
-  "8B": "V17",
-  "8B+": "V18",
-  "8C": "V19",
-  "8C+": "V20",
-  "9A": "V21",
+  "5+": "V1.5",
+  "6A": "V2",
+  "6A+": "V2.5",
+  "6B": "V3",
+  "6B+": "V3.5",
+  "6C": "V4",
+  "6C+": "V4.5",
+  "7A": "V5",
+  "7A+": "V5.5",
+  "7B": "V6",
+  "7B+": "V6.5",
+  "7C": "V7",
+  "7C+": "V7.5",
+  "8A": "V8",
+  "8A+": "V8.5",
+  "8B": "V9",
+  "8B+": "V9.5",
+  "8C": "V10",
+  "8C+": "V10.5",
+  "9A": "V11",
 };
 
-export function gradeToNumber(grade: Grade): number {
-  return Number(grade.replace("V", ""));
+export function gradeToNumber(grade: Grade | string): number {
+  const gradeStr = String(grade).replace("V", "");
+  return parseFloat(gradeStr);
 }
 
 export function gradeToPoints(grade: Grade, settings: AppSettings): number {
@@ -72,7 +73,7 @@ export function gradeToDisplay(grade: Grade, unit: GradeDisplayUnit): string {
   return grade;
 }
 
-export function displayToGrade(display: string, unit: GradeDisplayUnit): Grade | undefined {
+export function displayToGrade(display: string, unit: GradeDisplayUnit): string | undefined {
   if (unit === "v") {
     return (GRADES_ORDER.find((grade) => grade === display) as Grade | undefined);
   }
