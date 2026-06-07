@@ -830,10 +830,13 @@ function App() {
 
       setStrengthSessions(savedStrengthSessions);
 
-      // Check if Google redirected back with a token (or error) in the URL hash.
+      // Check if Google redirected back with a code (or error) in the URL query.
       let redirectSession: GoogleAuthSession | null = null;
       try {
-        redirectSession = extractOAuthTokenFromUrl();
+        const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+        if (clientId) {
+          redirectSession = await extractOAuthTokenFromUrl(clientId);
+        }
       } catch (oauthErr) {
         const msg = oauthErr instanceof Error ? oauthErr.message : String(oauthErr);
         addDriveLog(`OAuth error on return: ${msg}`);
@@ -1274,13 +1277,13 @@ function App() {
     }
   }
 
-  function connectGoogleDrive(): void {
+  async function connectGoogleDrive(): Promise<void> {
     if (!googleClientId) {
       setDriveConnectError("Missing VITE_GOOGLE_CLIENT_ID. Configure it in Vercel and .env.local.");
       return;
     }
     // Navigate immediately — no state update before redirect to avoid blocking navigation
-    initiateGoogleOAuthRedirect(googleClientId);
+    await initiateGoogleOAuthRedirect(googleClientId);
   }
 
   function disconnectGoogleDrive(): void {

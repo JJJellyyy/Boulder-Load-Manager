@@ -7,6 +7,7 @@ const DRIVE_SCOPE = [
   "profile",
 ].join(" ");
 const BACKUP_FILE_NAME = "boulder-load-manager-backup.json";
+const CODE_VERIFIER_KEY = "google_oauth_code_verifier";
 
 export interface GoogleAuthSession {
   accessToken: string;
@@ -20,61 +21,112 @@ export interface GoogleProfile {
   picture?: string;
 }
 
-/** Redirect the browser to Google's OAuth consent page. Returns after redirect — caller never resumes. */
-export function initiateGoogleOAuthRedirect(clientId: string): void {
+/** Generate PKCE code challenge from verifier */
+async function generateCodeChallenge(verifier: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(verifier);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return btoa(hashArray.map((b) => String.fromCharCode(b)).join(""))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+/** Generate random PKCE code verifier */
+function generateCodeVerifier(): string {
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+  return btoa(String.fromCharCode.apply(null, Array.from(array)))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+/** Redirect the browser to Google's OAuth consent page using Authorization Code Flow with PKCE. */
+export async function initiateGoogleOAuthRedirect(clientId: string): Promise<void> {
   const redirectUri = window.location.origin + "/";
+  const codeVerifier = generateCodeVerifier();
+  const codeChallenge = await generateCodeChallenge(codeVerifier);
   
-  // Log for debugging
+  // Store verifier for token exchange (will be used in callback)
+  sessionStorage.setItem(CODE_VERIFIER_KEY, codeVerifier);
+  
   console.log("OAuth Debug Info:", {
-    clientId: clientId.split(".")[0] + "...", // Hide full client ID
+    clientId: clientId.split(".")[0] + "...",
     redirectUri,
-    currentUrl: window.location.href,
+    flow: "Authorization Code with PKCE",
   });
   
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
-    response_type: "token",
+    response_type: "code",
     scope: DRIVE_SCOPE,
+    code_challenge: codeChallenge,
+    code_challenge_method: "S256",
     prompt: "consent",
-    include_granted_scopes: "true",
   });
   window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
 }
 
 /**
- * Check if Google redirected back to us with a token in the URL hash.
+ * Check if Google redirected back to us with an auth code in the URL query.
+ * Exchanges the code for an access token via a backend endpoint.
  * Returns session on success, throws an error string if Google returned an error,
  * or returns null if no OAuth response is present.
  */
-export function extractOAuthTokenFromUrl(): GoogleAuthSession | null {
-  const hash = window.location.hash.substring(1);
-  if (!hash) return null;
-  const params = new URLSearchParams(hash);
+export async function extractOAuthTokenFromUrl(clientId: string): Promise<GoogleAuthSession | null> {
+  const params = new URLSearchParams(window.location.search);
 
   const error = params.get("error");
   if (error) {
-    // Clean up the URL
-    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    window.history.replaceState(null, "", window.location.pathname);
     
     const errorDescription = params.get("error_description") ?? "";
     let helpText = "";
     
     if (error === "invalid_client") {
-      helpText = "\n\nTo fix this:\n1. Go to Google Cloud Console → APIs & Services → Credentials\n2. Edit your OAuth 2.0 Client ID (Web application)\n3. Ensure the Redirect URI is set to: " + window.location.origin + "/\n4. Check that JavaScript Origins includes: " + window.location.origin;
+      helpText = "\n\nTo fix this:\n1. Go to Google Cloud Console → APIs & Services → Credentials\n2. Edit your OAuth 2.0 Client ID (Web application)\n3. Ensure the Redirect URI is set to: " + window.location.origin + "/\n4. Check that JavaScript Origins includes: " + window.location.origin + "\n5. Make sure 'Use secure flows' is configured in your OAuth settings";
     }
     
     throw new Error(`Google OAuth error: ${error} — ${errorDescription}${helpText}`);
   }
 
-  const accessToken = params.get("access_token");
-  const expiresIn = params.get("expires_in");
-  if (!accessToken) return null;
-  // Clean token out of the URL bar
-  window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  const code = params.get("code");
+  if (!code) return null;
+  
+  const codeVerifier = sessionStorage.getItem(CODE_VERIFIER_KEY);
+  if (!codeVerifier) {
+    throw new Error("OAuth session lost. Please try again.");
+  }
+  
+  // Clean up the URL
+  window.history.replaceState(null, "", window.location.pathname);
+  sessionStorage.removeItem(CODE_VERIFIER_KEY);
+  
+  // Exchange code for token via backend
+  const redirectUri = window.location.origin + "/";
+  const response = await fetch("/api/oauth/exchange", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      code,
+      code_verifier: codeVerifier,
+      client_id: clientId,
+      redirect_uri: redirectUri,
+    }),
+  });
+  
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to exchange auth code for token: ${error}`);
+  }
+  
+  const data = (await response.json()) as { access_token: string; expires_in: number };
   return {
-    accessToken,
-    expiresAt: Date.now() + parseInt(expiresIn ?? "3600") * 1000,
+    accessToken: data.access_token,
+    expiresAt: Date.now() + data.expires_in * 1000,
   };
 }
 
