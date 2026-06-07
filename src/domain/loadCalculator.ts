@@ -103,6 +103,15 @@ export function calculateSleepRecoveryMultiplier(actualSleepHours: number, setti
   return 1 + clamp(penalty, 0, settings.model.recovery.sleepPenalty.maxPenalty);
 }
 
+export function calculateStressMultiplier(stressLevel: number, settings: AppSettings): number {
+  const threshold = settings.model.recovery.stressPenalty.threshold;
+  if (stressLevel < threshold) return 1;
+  const maxStress = 10;
+  const deficit = clamp((stressLevel - threshold) / (maxStress - threshold), 0, 1);
+  const penalty = settings.model.recovery.stressPenalty.maxPenalty * Math.pow(deficit, settings.model.recovery.stressPenalty.exponent);
+  return 1 + clamp(penalty, 0, settings.model.recovery.stressPenalty.maxPenalty);
+}
+
 function getBoulderKey(holdType: HoldType, wallAngle: WallAngle): string {
   return `${holdType}__${wallAngle}`;
 }
@@ -183,12 +192,14 @@ export function estimateSimpleLoad(
   durationMinutes: number,
   grade: Grade,
   sleepHours: number,
+  stressLevel: number,
   settings: AppSettings,
 ): number {
   const gradeIntensity = calculateGradeIntensity(grade, settings);
   const speed = calculateSpeedMultiplier(count, durationMinutes, settings);
   const recovery = calculateSleepRecoveryMultiplier(sleepHours, settings);
-  return count * gradeIntensity * speed * recovery;
+  const stress = calculateStressMultiplier(stressLevel, settings);
+  return count * gradeIntensity * speed * recovery * stress;
 }
 
 export interface HistoryPoint {

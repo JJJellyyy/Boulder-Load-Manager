@@ -22,6 +22,7 @@ import { DEFAULT_SETTINGS, clampSettings } from "./domain/loadModelConfig";
 import {
   calculateGradeIntensity,
   calculateSleepRecoveryMultiplier,
+  calculateStressMultiplier,
   calculateSpeedMultiplier,
   calculateSessionLoad,
   gradeToDisplay,
@@ -631,11 +632,11 @@ function App() {
       let lo = 5, hi = 600;
       for (let i = 0; i < 50; i++) {
         const mid = (lo + hi) / 2;
-        const load = estimateSimpleLoad(plannerCount, mid, plannerGrade, sleep, settings);
+        const load = estimateSimpleLoad(plannerCount, mid, plannerGrade, sleep, plannerStress, settings);
         if (load > required) lo = mid; else hi = mid;
       }
       const solvedDuration = Math.round((lo + hi) / 2);
-      const actualLoad = estimateSimpleLoad(plannerCount, solvedDuration, plannerGrade, sleep, settings);
+      const actualLoad = estimateSimpleLoad(plannerCount, solvedDuration, plannerGrade, sleep, plannerStress, settings);
       const newAcute = (2 / (acuteWindow + 1)) * actualLoad + (1 - 2 / (acuteWindow + 1)) * prevAcute;
       const predAcwr = prevChronic > 0 ? newAcute / prevChronic : 0;
       return { type: "duration" as const, numValue: solvedDuration, strValue: "", unit: "min", predAcwr, required };
@@ -645,11 +646,11 @@ function App() {
       let lo = 1, hi = 150;
       for (let i = 0; i < 50; i++) {
         const mid = Math.round((lo + hi) / 2);
-        const load = estimateSimpleLoad(mid, plannerDuration, plannerGrade, sleep, settings);
+        const load = estimateSimpleLoad(mid, plannerDuration, plannerGrade, sleep, plannerStress, settings);
         if (load > required) hi = mid; else lo = mid;
       }
       const solvedCount = Math.round((lo + hi) / 2);
-      const actualLoad = estimateSimpleLoad(solvedCount, plannerDuration, plannerGrade, sleep, settings);
+      const actualLoad = estimateSimpleLoad(solvedCount, plannerDuration, plannerGrade, sleep, plannerStress, settings);
       const newAcute = (2 / (acuteWindow + 1)) * actualLoad + (1 - 2 / (acuteWindow + 1)) * prevAcute;
       const predAcwr = prevChronic > 0 ? newAcute / prevChronic : 0;
       return { type: "count" as const, numValue: solvedCount, strValue: "", unit: "problems", predAcwr, required };
@@ -660,20 +661,21 @@ function App() {
     let bestGrade = grades[0];
     let bestDiff = Infinity;
     for (const g of grades) {
-      const load = estimateSimpleLoad(plannerCount, plannerDuration, g, sleep, settings);
+      const load = estimateSimpleLoad(plannerCount, plannerDuration, g, sleep, plannerStress, settings);
       const diff = Math.abs(load - required);
       if (diff < bestDiff) { bestDiff = diff; bestGrade = g; }
     }
-    const actualLoad = estimateSimpleLoad(plannerCount, plannerDuration, bestGrade, sleep, settings);
+    const actualLoad = estimateSimpleLoad(plannerCount, plannerDuration, bestGrade, sleep, plannerStress, settings);
     const newAcute = (2 / (acuteWindow + 1)) * actualLoad + (1 - 2 / (acuteWindow + 1)) * prevAcute;
     const predAcwr = prevChronic > 0 ? newAcute / prevChronic : 0;
     return { type: "grade" as const, numValue: 0, strValue: gradeToDisplay(bestGrade, settings.gradeDisplayUnit), unit: "", predAcwr, required };
-  }, [ewmaSnapshots, settings, plannerSleep, plannerGrade, plannerCount, plannerDuration, plannerUnknown]);
+  }, [ewmaSnapshots, settings, plannerSleep, plannerStress, plannerGrade, plannerCount, plannerDuration, plannerUnknown]);
 
   const acwrExample = useMemo(() => {
     const dummyProblems = 24;
     const dummyDuration = 120;
     const dummySleep = 7.5;
+    const dummyStress = 5;
     const prevAcuteEwma = 95;
     const prevChronicEwma = 110;
 
@@ -685,7 +687,8 @@ function App() {
     const baselineGrade = calculateGradeIntensity("V6", settings);
     const baselineSpeed = calculateSpeedMultiplier(dummyProblems, dummyDuration, settings);
     const baselineRecovery = calculateSleepRecoveryMultiplier(dummySleep, settings);
-    const baselineLoad = dummyProblems * baselineGrade * baselineSpeed * baselineRecovery;
+    const baselineStress = calculateStressMultiplier(dummyStress, settings);
+    const baselineLoad = dummyProblems * baselineGrade * baselineSpeed * baselineRecovery * baselineStress;
     const nextAcuteEwma = acuteAlpha * baselineLoad + (1 - acuteAlpha) * prevAcuteEwma;
     const nextChronicEwma = chronicAlpha * baselineLoad + (1 - chronicAlpha) * prevChronicEwma;
     const nextAcwr = nextChronicEwma <= 0 ? 0 : nextAcuteEwma / nextChronicEwma;
@@ -700,19 +703,22 @@ function App() {
       dummyProblems *
       calculateGradeIntensity("V9", settings) *
       baselineSpeed *
-      baselineRecovery;
+      baselineRecovery *
+      baselineStress;
 
     const fasterPaceLoad =
       dummyProblems *
       baselineGrade *
       calculateSpeedMultiplier(dummyProblems, 75, settings) *
-      baselineRecovery;
+      baselineRecovery *
+      baselineStress;
 
     const poorSleepLoad =
       dummyProblems *
       baselineGrade *
       baselineSpeed *
-      calculateSleepRecoveryMultiplier(6.0, settings);
+      calculateSleepRecoveryMultiplier(6.0, settings) *
+      baselineStress;
 
     return {
       dummyProblems,

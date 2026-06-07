@@ -21,8 +21,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
       sleepPenalty: {
         exponent: 2,
         maxPenalty: 0.6,
-      },
-    },
+      },      stressPenalty: {
+        threshold: 7,
+        exponent: 1.5,
+        maxPenalty: 0.3,
+      },    },
     ewmaWindows: [10, 15, 20, 25],
     acwr: {
       acuteWindow: 10,
@@ -109,6 +112,17 @@ export function clampSettings(input: AppSettings): AppSettings {
             legacySleepMaxPenalty ??
             DEFAULT_SETTINGS.model.recovery.sleepPenalty.maxPenalty,
         },
+        stressPenalty: {
+          threshold:
+            incoming.model?.recovery?.stressPenalty?.threshold ??
+            DEFAULT_SETTINGS.model.recovery.stressPenalty.threshold,
+          exponent:
+            incoming.model?.recovery?.stressPenalty?.exponent ??
+            DEFAULT_SETTINGS.model.recovery.stressPenalty.exponent,
+          maxPenalty:
+            incoming.model?.recovery?.stressPenalty?.maxPenalty ??
+            DEFAULT_SETTINGS.model.recovery.stressPenalty.maxPenalty,
+        },
       },
       ewmaWindows: incoming.model?.ewmaWindows ?? DEFAULT_SETTINGS.model.ewmaWindows,
       acwr: {
@@ -136,6 +150,9 @@ export function clampSettings(input: AppSettings): AppSettings {
   next.model.recovery.personalMaxSleepHours = clamp(next.model.recovery.personalMaxSleepHours, 4, 12);
   next.model.recovery.sleepPenalty.exponent = clamp(next.model.recovery.sleepPenalty.exponent, 0.5, 6);
   next.model.recovery.sleepPenalty.maxPenalty = clamp(next.model.recovery.sleepPenalty.maxPenalty, 0, 0.95);
+  next.model.recovery.stressPenalty.threshold = clamp(next.model.recovery.stressPenalty.threshold, 0, 10);
+  next.model.recovery.stressPenalty.exponent = clamp(next.model.recovery.stressPenalty.exponent, 0.5, 6);
+  next.model.recovery.stressPenalty.maxPenalty = clamp(next.model.recovery.stressPenalty.maxPenalty, 0, 0.95);
 
   const allowedWindows = [10, 15, 20, 25] as const;
   const filteredWindows = next.model.ewmaWindows.filter((windowValue) =>

@@ -106,6 +106,11 @@ export interface RecoveryConfig {
     exponent: number;
     maxPenalty: number;
   };
+  stressPenalty: {
+    threshold: number;
+    exponent: number;
+    maxPenalty: number;
+  };
 }
 
 export interface LoadModelConfig {
