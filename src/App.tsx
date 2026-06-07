@@ -479,7 +479,7 @@ function App() {
   const [plannerGrade, setPlannerGrade] = useState<Grade>("V5");
   const [plannerCount, setPlannerCount] = useState<number>(20);
   const [plannerDuration, setPlannerDuration] = useState<number>(120);
-  const [plannerUnknown, setPlannerUnknown] = useState<"duration" | "grade" | "count">("duration");
+
   const [plannerSleep, setPlannerSleep] = useState<number>(8);
   const [plannerStress, setPlannerStress] = useState<number>(5);
 
@@ -615,74 +615,20 @@ function App() {
     [sessions, settings, historyRange],
   );
 
-  // Next-session planner: compute required load + solve unknown metric
-  const plannerResult = useMemo(() => {
+  // Planner: calculate predicted ACWR from manual inputs
+  const plannerPrediction = useMemo(() => {
     const snapshots = Object.values(ewmaSnapshots);
     if (snapshots.length === 0) return null;
     const prevAcute = snapshots.reduce((s, snap) => s + getEwmaValue(snap, settings.model.acwr.acuteWindow), 0);
     const prevChronic = snapshots.reduce((s, snap) => s + getEwmaValue(snap, settings.model.acwr.chronicWindow), 0);
     if (prevChronic === 0) return null;
 
-    const target = settings.model.acwr.targetAcwr;
     const acuteWindow = settings.model.acwr.acuteWindow;
-    const required = solveTargetLoad(prevAcute, prevChronic, target, acuteWindow);
-
-    const sleep = plannerSleep;
-
-    if (plannerUnknown === "duration") {
-      let lo = 5, hi = 600;
-      for (let i = 0; i < 50; i++) {
-        const mid = (lo + hi) / 2;
-        const load = estimateSimpleLoad(plannerCount, mid, plannerGrade, sleep, plannerStress, settings);
-        if (load > required) lo = mid; else hi = mid;
-      }
-      const solvedDuration = Math.round((lo + hi) / 2);
-      const actualLoad = estimateSimpleLoad(plannerCount, solvedDuration, plannerGrade, sleep, plannerStress, settings);
-      const newAcute = (2 / (acuteWindow + 1)) * actualLoad + (1 - 2 / (acuteWindow + 1)) * prevAcute;
-      const predAcwr = prevChronic > 0 ? newAcute / prevChronic : 0;
-      return { type: "duration" as const, numValue: solvedDuration, strValue: "", unit: "min", predAcwr, required };
-    }
-
-    if (plannerUnknown === "count") {
-      let lo = 1, hi = 150;
-      for (let i = 0; i < 50; i++) {
-        const mid = Math.round((lo + hi) / 2);
-        const load = estimateSimpleLoad(mid, plannerDuration, plannerGrade, sleep, plannerStress, settings);
-        if (load > required) hi = mid; else lo = mid;
-      }
-      const solvedCount = Math.round((lo + hi) / 2);
-      const actualLoad = estimateSimpleLoad(solvedCount, plannerDuration, plannerGrade, sleep, plannerStress, settings);
-      const newAcute = (2 / (acuteWindow + 1)) * actualLoad + (1 - 2 / (acuteWindow + 1)) * prevAcute;
-      const predAcwr = prevChronic > 0 ? newAcute / prevChronic : 0;
-      return { type: "count" as const, numValue: solvedCount, strValue: "", unit: "problems", predAcwr, required };
-    }
-
-    // Solve grade - pick grade that produces target ACWR
-    const grades = [...GRADES] as Grade[];
-    let bestGrade = grades[0];
-    let bestAcwrDiff = Infinity;
-    
-    for (const g of grades) {
-      const load = estimateSimpleLoad(plannerCount, plannerDuration, g, sleep, plannerStress, settings);
-      const newAcute = (2 / (acuteWindow + 1)) * load + (1 - 2 / (acuteWindow + 1)) * prevAcute;
-      const acwr = prevChronic > 0 ? newAcute / prevChronic : 0;
-      const acwrDiff = Math.abs(acwr - target);
-      if (acwrDiff < bestAcwrDiff) {
-        bestAcwrDiff = acwrDiff;
-        bestGrade = g;
-      }
-    }
-    
-    const actualLoad = estimateSimpleLoad(plannerCount, plannerDuration, bestGrade, sleep, plannerStress, settings);
+    const actualLoad = estimateSimpleLoad(plannerCount, plannerDuration, plannerGrade, plannerSleep, plannerStress, settings);
     const newAcute = (2 / (acuteWindow + 1)) * actualLoad + (1 - 2 / (acuteWindow + 1)) * prevAcute;
     const predAcwr = prevChronic > 0 ? newAcute / prevChronic : 0;
-    return { type: "grade" as const, numValue: 0, strValue: gradeToDisplay(bestGrade, settings.gradeDisplayUnit), unit: "", predAcwr, required };
-  }, [ewmaSnapshots, settings, plannerSleep, plannerStress, plannerGrade, plannerCount, plannerDuration, plannerUnknown]);
-
-  const gradeDistribution = useMemo(() => {
-    if (!plannerResult || plannerResult.required <= 0) return {};
-    return calculateGradeDistribution(plannerResult.required, plannerDuration, plannerSleep, plannerStress, settings);
-  }, [plannerResult, plannerDuration, plannerSleep, plannerStress, settings]);
+    return { predAcwr, actualLoad };
+  }, [ewmaSnapshots, settings, plannerSleep, plannerStress, plannerGrade, plannerCount, plannerDuration]);
 
   const acwrExample = useMemo(() => {
     const dummyProblems = 24;
@@ -1748,7 +1694,7 @@ function App() {
           {/* Next-session planner */}
           <article className="panel full-width">
             <h2>Next Session Planner</h2>
-            <p className="muted-hint">Fix two of the three session metrics and the algorithm calculates the third to reach your ACWR target of <strong>{settings.model.acwr.targetAcwr.toFixed(2)}</strong>.</p>
+            <p className="muted-hint">Enter your planned session details to see what ACWR you'll reach. Your ACWR target: <strong>{settings.model.acwr.targetAcwr.toFixed(2)}</strong>.</p>
             {plannerResult === null ? (
               <p>Log at least one session to enable the planner.</p>
             ) : (
@@ -1764,48 +1710,27 @@ function App() {
                   </label>
                 </div>
                 <div className="planner-grid">
-                  <div className={`planner-field ${plannerUnknown === "duration" ? "planner-unknown" : ""}`}>
+                  <div className="planner-field">
                     <label>
                       Duration (min)
-                      <button type="button" className="planner-toggle" onClick={() => setPlannerUnknown("duration")}>
-                        {plannerUnknown === "duration" ? "⟵ solving" : "solve this"}
-                      </button>
                     </label>
-                    {plannerUnknown === "duration" ? (
-                      <span className="planner-solved">{plannerResult.numValue} min</span>
-                    ) : (
-                      <NumberInput value={plannerDuration} min={5} max={600} step={5} onCommit={setPlannerDuration} />
-                    )}
+                    <NumberInput value={plannerDuration} min={5} max={600} step={5} onCommit={setPlannerDuration} />
                   </div>
-                  <div className={`planner-field ${plannerUnknown === "count" ? "planner-unknown" : ""}`}>
+                  <div className="planner-field">
                     <label>
                       Boulder count
-                      <button type="button" className="planner-toggle" onClick={() => setPlannerUnknown("count")}>
-                        {plannerUnknown === "count" ? "⟵ solving" : "solve this"}
-                      </button>
                     </label>
-                    {plannerUnknown === "count" ? (
-                      <span className="planner-solved">{plannerResult.numValue} problems</span>
-                    ) : (
-                      <NumberInput value={plannerCount} min={1} max={150} step={1} onCommit={setPlannerCount} />
-                    )}
+                    <NumberInput value={plannerCount} min={1} max={150} step={1} onCommit={setPlannerCount} />
                   </div>
-                  <div className={`planner-field ${plannerUnknown === "grade" ? "planner-unknown" : ""}`}>
+                  <div className="planner-field">
                     <label>
                       Avg grade
-                      <button type="button" className="planner-toggle" onClick={() => setPlannerUnknown("grade")}>
-                        {plannerUnknown === "grade" ? "⟵ solving" : "solve this"}
-                      </button>
                     </label>
-                    {plannerUnknown === "grade" ? (
-                      <span className="planner-solved">{plannerResult.strValue}</span>
-                    ) : (
-                      <select value={plannerGrade} onChange={(e) => setPlannerGrade(e.target.value as Grade)}>
-                        {GRADES.map((g) => (
-                          <option key={g} value={g}>{gradeToDisplay(g, settings.gradeDisplayUnit)}</option>
-                        ))}
-                      </select>
-                    )}
+                    <select value={plannerGrade} onChange={(e) => setPlannerGrade(e.target.value as Grade)}>
+                      {GRADES.map((g) => (
+                        <option key={g} value={g}>{gradeToDisplay(g, settings.gradeDisplayUnit)}</option>
+                      ))}
+                    </select>
                   </div>
                   <div className="planner-result">
                     <span className="planner-acwr-label">Predicted ACWR</span>
@@ -1813,47 +1738,14 @@ function App() {
                       {plannerResult.predAcwr.toFixed(2)}
                     </span>
                   </div>
+                  <div className="planner-result">
+                    <span className="planner-acwr-label">Estimated Load</span>
+                    <span className="planner-acwr-value">
+                      {plannerResult.actualLoad.toFixed(0)}
+                    </span>
+                  </div>
                 </div>
                 
-                {plannerResult && Object.keys(gradeDistribution).length > 0 && (
-                  <div className="grade-distribution">
-                    <h3>Grade Distribution Options</h3>
-                    <p>To reach your ACWR target, you could climb:</p>
-                    <svg width="100%" height="250" className="grade-dist-chart">
-                      {(() => {
-                        const sortedGrades = GRADES.filter((g) => gradeDistribution[g] && gradeDistribution[g] > 0).sort(
-                          (a, b) => gradeToNumber(a) - gradeToNumber(b)
-                        );
-                        if (sortedGrades.length === 0) return null;
-                        
-                        const maxCount = Math.max(...sortedGrades.map((g) => gradeDistribution[g]));
-                        const chartHeight = 200;
-                        const chartPadding = 20;
-                        const barWidth = Math.max(30, Math.floor((window.innerWidth - 60) / sortedGrades.length * 0.8));
-                        const barSpacing = Math.floor((window.innerWidth - 60) / sortedGrades.length);
-                        
-                        return sortedGrades.map((grade, idx) => {
-                          const count = gradeDistribution[grade];
-                          const barHeight = (count / maxCount) * chartHeight;
-                          const x = chartPadding + idx * barSpacing + (barSpacing - barWidth) / 2;
-                          const y = chartPadding + chartHeight - barHeight;
-                          
-                          return (
-                            <g key={grade}>
-                              <rect x={x} y={y} width={barWidth} height={barHeight} fill="#8b7355" opacity="0.7" rx="4" />
-                              <text x={x + barWidth / 2} y={y - 5} textAnchor="middle" fontSize="12" fontWeight="bold" fill="#fff">
-                                {count}
-                              </text>
-                              <text x={x + barWidth / 2} y={chartPadding + chartHeight + 20} textAnchor="middle" fontSize="11" fill="#999">
-                                {gradeToDisplay(grade, settings.gradeDisplayUnit)}
-                              </text>
-                            </g>
-                          );
-                        });
-                      })()}
-                    </svg>
-                  </div>
-                )}
               </>
             )}
           </article>
