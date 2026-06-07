@@ -1695,7 +1695,7 @@ function App() {
           <article className="panel full-width">
             <h2>Next Session Planner</h2>
             <p className="muted-hint">Enter your planned session details to see what ACWR you'll reach. Your ACWR target: <strong>{settings.model.acwr.targetAcwr.toFixed(2)}</strong>.</p>
-            {plannerResult === null ? (
+            {plannerPrediction === null ? (
               <p>Log at least one session to enable the planner.</p>
             ) : (
               <>
@@ -1734,14 +1734,14 @@ function App() {
                   </div>
                   <div className="planner-result">
                     <span className="planner-acwr-label">Predicted ACWR</span>
-                    <span className={`planner-acwr-value ${getAcwrZone(plannerResult.predAcwr, settings.model.acwr.lowThreshold, settings.model.acwr.highThreshold).toLowerCase().replace(" ", "-")}`}>
-                      {plannerResult.predAcwr.toFixed(2)}
+                    <span className={`planner-acwr-value ${getAcwrZone(plannerPrediction.predAcwr, settings.model.acwr.lowThreshold, settings.model.acwr.highThreshold).toLowerCase().replace(" ", "-")}`}>
+                      {plannerPrediction.predAcwr.toFixed(2)}
                     </span>
                   </div>
                   <div className="planner-result">
                     <span className="planner-acwr-label">Estimated Load</span>
                     <span className="planner-acwr-value">
-                      {plannerResult.actualLoad.toFixed(0)}
+                      {plannerPrediction.actualLoad.toFixed(0)}
                     </span>
                   </div>
                 </div>
