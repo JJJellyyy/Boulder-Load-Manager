@@ -232,6 +232,25 @@ export interface HistoryPoint {
   acwr: number;
 }
 
+export function getSessionDayKey(session: SessionInput): string {
+  const createdDay = session.createdAt?.slice(0, 10);
+  if (createdDay && /^\d{4}-\d{2}-\d{2}$/.test(createdDay)) {
+    return createdDay;
+  }
+
+  const climbedOn = session.problems.find((problem) => Boolean(problem.climbedOn))?.climbedOn;
+  if (climbedOn) {
+    return climbedOn.slice(0, 10);
+  }
+
+  const parsed = new Date(session.createdAt);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10);
+  }
+
+  return new Date().toISOString().slice(0, 10);
+}
+
 /**
  * Build a time-ordered list of EWMA/ACWR values from raw sessions.
  * Returns all sessions computed from scratch (full history needed for accurate EWMA),
@@ -255,7 +274,7 @@ export function buildSessionHistory(
 
   const sessionsByDate = new Map<string, SessionInput[]>();
   for (const session of sorted) {
-    const dayKey = session.createdAt.slice(0, 10);
+    const dayKey = getSessionDayKey(session);
     const existing = sessionsByDate.get(dayKey) ?? [];
     existing.push(session);
     sessionsByDate.set(dayKey, existing);

@@ -6,7 +6,8 @@ const DRIVE_SCOPE = [
   "email",
   "profile",
 ].join(" ");
-const BACKUP_FILE_NAME = "boulder-load-manager-backup.json";
+const BACKUP_BASE_NAME = "boulder-load-manager-backup";
+const MAX_BACKUP_COPIES = 5;
 const CODE_VERIFIER_KEY = "google_oauth_code_verifier";
 
 export interface GoogleAuthSession {
@@ -141,25 +142,33 @@ export async function fetchGoogleProfile(accessToken: string): Promise<GooglePro
 interface DriveFile {
   id: string;
   name: string;
-  modifiedTime: string;
+  modifiedTime?: string;
+  createdTime?: string;
 }
-
-async function findBackupFileId(accessToken: string): Promise<string | undefined> {
+async function findBackupFiles(accessToken: string): Promise<DriveFile[]> {
   const query = encodeURIComponent(
-    `name='${BACKUP_FILE_NAME}' and trashed=false and 'root' in parents`,
+    `name contains '${BACKUP_BASE_NAME}' and trashed=false and 'root' in parents`,
   );
   const response = await fetch(
-    `https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,name,modifiedTime)&pageSize=1`,
+    `https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,name,modifiedTime,createdTime)&orderBy=createdTime desc&pageSize=10`,
     { headers: { Authorization: `Bearer ${accessToken}` } },
   );
   if (!response.ok) throw new Error("Failed to query Google Drive backup files.");
   const payload = (await response.json()) as { files?: DriveFile[] };
-  return payload.files?.[0]?.id;
+  return payload.files ?? [];
+}
+
+async function deleteDriveFile(accessToken: string, fileId: string): Promise<void> {
+  const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) throw new Error("Failed to delete old backup file from Google Drive.");
 }
 
 function createMultipartBody(payload: DriveBackupPayload): { body: string; boundary: string } {
   const boundary = `boundary_${Date.now()}`;
-  const metadata = { name: BACKUP_FILE_NAME, mimeType: "application/json", parents: ["root"] };
+  const metadata = { name: BACKUP_BASE_NAME + ".json", mimeType: "application/json", parents: ["root"] };
   const body = [
     `--${boundary}`,
     "Content-Type: application/json; charset=UTF-8",
@@ -179,14 +188,26 @@ export async function uploadBackupToGoogleDrive(
   accessToken: string,
   payload: DriveBackupPayload,
 ): Promise<void> {
-  const fileId = await findBackupFileId(accessToken);
-  const { body, boundary } = createMultipartBody(payload);
-  const endpoint = fileId
-    ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
-    : "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart";
-  const method = fileId ? "PATCH" : "POST";
-  const response = await fetch(endpoint, {
-    method,
+  // Create a timestamped backup copy instead of overwriting a single file.
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  const filename = `${BACKUP_BASE_NAME}-${ts}.json`;
+  const boundary = `boundary_${Date.now()}`;
+  const metadata = { name: filename, mimeType: "application/json", parents: ["root"] };
+  const body = [
+    `--${boundary}`,
+    "Content-Type: application/json; charset=UTF-8",
+    "",
+    JSON.stringify(metadata),
+    `--${boundary}`,
+    "Content-Type: application/json; charset=UTF-8",
+    "",
+    JSON.stringify(payload),
+    `--${boundary}--`,
+    "",
+  ].join("\r\n");
+
+  const response = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", {
+    method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": `multipart/related; boundary=${boundary}`,
@@ -194,11 +215,25 @@ export async function uploadBackupToGoogleDrive(
     body,
   });
   if (!response.ok) throw new Error("Failed to upload backup to Google Drive.");
+
+  // Cleanup old backups beyond the configured limit
+  try {
+    const files = await findBackupFiles(accessToken);
+    if (files.length > MAX_BACKUP_COPIES) {
+      const toDelete = files.slice(MAX_BACKUP_COPIES);
+      for (const f of toDelete) {
+        if (f.id) await deleteDriveFile(accessToken, f.id);
+      }
+    }
+  } catch (err) {
+    // Non-fatal: log in caller; do not fail upload because cleanup failed.
+  }
 }
 
 export async function downloadBackupFromGoogleDrive(accessToken: string): Promise<DriveBackupPayload> {
-  const fileId = await findBackupFileId(accessToken);
-  if (!fileId) throw new Error("No backup file found in Google Drive.");
+  const files = await findBackupFiles(accessToken);
+  if (files.length === 0) throw new Error("No backup file found in Google Drive.");
+  const fileId = files[0].id;
   const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });

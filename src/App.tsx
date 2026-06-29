@@ -31,6 +31,7 @@ import {
   suggestedCapacityRange,
   estimateSimpleLoad,
   buildSessionHistory,
+  getSessionDayKey,
   type HistoryPoint,
 } from "./domain/loadCalculator";
 import {
@@ -575,6 +576,7 @@ function App() {
   const [driveStatus, setDriveStatus] = useState<string>("Google Drive not connected.");
   const [driveConnectError, setDriveConnectError] = useState<string | undefined>(undefined);
   const [driveLog, setDriveLog] = useState<string[]>([]);
+  const [notification, setNotification] = useState<string | undefined>(undefined);
   // Dashboard history graph
   const [historyRange, setHistoryRange] = useState<30 | 90 | null>(30);
   // Next-session planner
@@ -594,6 +596,11 @@ function App() {
     const entry = `[${new Date().toLocaleTimeString()}] ${msg}`;
     console.log("[Drive]", msg);
     setDriveLog((prev) => [...prev.slice(-19), entry]);
+  }
+
+  function showNotification(msg: string, ms = 4000): void {
+    setNotification(msg);
+    window.setTimeout(() => setNotification(undefined), ms);
   }
 
   const [entryCount, setEntryCount] = useState(1);
@@ -994,15 +1001,18 @@ function App() {
           setDriveSession(redirectSession);
           setGoogleProfile(profile);
           storeDriveSession(redirectSession);
-          if (savedSessions.length === 0) {
-            setDriveStatus(`Signed in as ${profile.email}. Restoring backup…`);
-            addDriveLog("No local data — restoring from Drive…");
-            await applyDriveBackup(redirectSession.accessToken);
-            addDriveLog("Restore complete.");
-            setDriveStatus(`Backup restored. Signed in as ${profile.email}.`);
-          } else {
-            setDriveStatus(`Google Drive connected as ${profile.email}.`);
-          }
+              if (savedSessions.length === 0) {
+                setDriveStatus(`Signed in as ${profile.email}. Restoring backup…`);
+                addDriveLog("No local data — restoring from Drive…");
+                await applyDriveBackup(redirectSession.accessToken);
+                addDriveLog("Restore complete.");
+                setDriveStatus(`Backup restored. Signed in as ${profile.email}.`);
+              } else {
+                setDriveStatus(`Google Drive connected as ${profile.email}. Attempting to merge data...`);
+                addDriveLog("Local data exists — merging missing sessions from Drive.");
+                await mergeDriveBackup(redirectSession.accessToken);
+                setDriveStatus(`Google Drive connected as ${profile.email}. Merge complete.`);
+              }
         } catch (err) {
           addDriveLog(`Redirect sign-in error: ${err instanceof Error ? err.message : String(err)}`);
         }
@@ -1018,7 +1028,10 @@ function App() {
               await applyDriveBackup(existingDriveSession.accessToken);
               setDriveStatus(`Backup restored. Signed in as ${profile.email}.`);
             } else {
-              setDriveStatus(`Google Drive connected as ${profile.email}.`);
+              setDriveStatus(`Google Drive connected as ${profile.email}. Attempting to merge data...`);
+              addDriveLog("Local data exists — merging missing sessions from Drive.");
+              await mergeDriveBackup(existingDriveSession.accessToken);
+              setDriveStatus(`Google Drive connected as ${profile.email}. Merge complete.`);
             }
           } catch {
             storeDriveSession(undefined);
@@ -1243,7 +1256,7 @@ function App() {
     const allKeys = new Set<string>();
 
     for (const sessionItem of ordered) {
-      const dayKey = sessionItem.createdAt.slice(0, 10);
+      const dayKey = getSessionDayKey(sessionItem);
       const existing = sessionsByDate.get(dayKey) ?? [];
       existing.push(sessionItem);
       sessionsByDate.set(dayKey, existing);
@@ -1490,6 +1503,38 @@ function App() {
     }
   }
 
+  async function mergeDriveBackup(token: string): Promise<void> {
+    try {
+      const payload = await downloadBackupFromGoogleDrive(token);
+      const remoteSessions = payload.sessions ?? [];
+      const local = await loadSessions();
+      const localIds = new Set(local.map((s) => s.id));
+      const sessionsToAdd = remoteSessions.filter((s) => !localIds.has(s.id));
+
+      for (const s of sessionsToAdd) {
+        await saveSession(s);
+      }
+
+      if (sessionsToAdd.length === 0) {
+        addDriveLog("No new sessions to merge from Drive.");
+        showNotification("No new sessions to merge from Drive.");
+        return;
+      }
+
+      const updated = await loadSessions();
+      const recalculatedSnapshots = await recomputeAndPersistSnapshots(updated, settings);
+
+      setEwmaSnapshots(recalculatedSnapshots);
+      setSessions(updated.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+      addDriveLog(`Merged ${sessionsToAdd.length} sessions from Drive.`);
+      showNotification(`Merged ${sessionsToAdd.length} sessions from Drive.`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addDriveLog(`Error merging backup: ${msg}`);
+      showNotification(`Error merging backup: ${msg}`);
+    }
+  }
+
   async function connectGoogleDrive(): Promise<void> {
     if (!googleClientId) {
       setDriveConnectError("Missing VITE_GOOGLE_CLIENT_ID. Configure it in Vercel and .env.local.");
@@ -1518,15 +1563,18 @@ function App() {
     const token = ensureDriveAccessToken();
     if (!token) {
       setDriveStatus("Token expired — please sign in again.");
+      showNotification("Token expired — please sign in again.");
       return;
     }
 
     try {
       await uploadBackupToGoogleDrive(token, getBackupPayload());
       setDriveStatus("Backup uploaded to Google Drive.");
+      showNotification("Backup uploaded to Google Drive.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Upload failed.";
       setDriveStatus(message);
+      showNotification(`Upload failed: ${message}`);
     }
   }
 
@@ -1534,15 +1582,18 @@ function App() {
     const token = ensureDriveAccessToken();
     if (!token) {
       setDriveStatus("Token expired — please sign in again.");
+      showNotification("Token expired — please sign in again.");
       return;
     }
 
     try {
       await applyDriveBackup(token);
       setDriveStatus("Backup restored from Google Drive.");
+      showNotification("Backup restored from Google Drive.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Restore failed.";
       setDriveStatus(message);
+      showNotification(`Restore failed: ${message}`);
     }
   }
 
@@ -1604,6 +1655,7 @@ function App() {
 
   return (
     <main className="app-shell">
+      {notification && <div className="notification">{notification}</div>}
       <header className="hero-header">
         <div className="hero-top-row">
           {googleProfile ? (

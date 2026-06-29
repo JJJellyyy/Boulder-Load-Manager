@@ -141,6 +141,19 @@
   word-break: break-all;
 }
 
+.notification {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  background: rgba(17,24,39,0.95);
+  color: #fff;
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(2,6,23,0.3);
+  z-index: 9999;
+  font-weight: 600;
+}
+
 /* ── Overall ACWR stat ─────────────────────────────────────── */
 .overall-acwr-stat {
   display: flex;

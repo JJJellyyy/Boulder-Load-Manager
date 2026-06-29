@@ -1,4 +1,17 @@
-import type { VercelRequest, VercelResponse } from "@vercel/node";
+type VercelRequest = {
+  method?: string;
+  body?: Record<string, unknown>;
+};
+
+type VercelResponse = {
+  status: (code: number) => {
+    json: (body: unknown) => unknown;
+  };
+};
+
+declare const process: {
+  env: Record<string, string | undefined>;
+};
 
 const GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 
