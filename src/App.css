@@ -555,6 +555,73 @@ td {
   border: 1px solid var(--border);
 }
 
+.boulder-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin: 1rem 0;
+  padding: 1rem;
+  background: #f9f7f4;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.breakdown-item {
+  padding: 0.6rem 1rem;
+  background: #fff;
+  border: 1px solid #e0d5ca;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  color: #333;
+  font-weight: 500;
+}
+
+.breakdown-item strong {
+  color: #8b7355;
+  font-size: 1.1rem;
+}
+
+.grade-conversion-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 0.9rem;
+  background: #fafafa;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.grade-conversion-table thead {
+  background: #f0f0f0;
+  font-weight: bold;
+  text-align: left;
+}
+
+.grade-conversion-table th,
+.grade-conversion-table td {
+  padding: 0.7rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.grade-conversion-table tbody tr:hover {
+  background: #f5f5f5;
+}
+
+.grade-conversion-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.ewma-weights-svg {
+  width: 100%;
+  max-width: 600px;
+  margin: 1rem 0;
+  background: linear-gradient(180deg, rgba(15, 127, 136, 0.04), rgba(255, 255, 255, 0.6));
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  display: block;
+}
+
 @media (max-width: 900px) {
   .hero-stats,
   .panel-grid,

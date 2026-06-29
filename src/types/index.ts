@@ -94,33 +94,23 @@ export interface GradeIntensityConfig {
 }
 
 export interface SpeedMultiplierConfig {
-  targetMinutesPerBoulder: number;
-  exponent: number;
-  maxMultiplier: number;
-  minMultiplier: number;
+  impactPercent: number;
 }
 
 export interface RecoveryConfig {
   personalMaxSleepHours: number;
-  sleepPenalty: {
-    exponent: number;
-    maxPenalty: number;
-  };
-  stressPenalty: {
-    threshold: number;
-    exponent: number;
-    maxPenalty: number;
-  };
+  sleepImpactPercent: number;
+  stressImpactPercent: number;
 }
 
 export interface LoadModelConfig {
   gradeIntensity: GradeIntensityConfig;
   speed: SpeedMultiplierConfig;
   recovery: RecoveryConfig;
-  ewmaWindows: EWMADays[];
+  ewmaWindows: number[];
   acwr: {
-    acuteWindow: EWMADays;
-    chronicWindow: EWMADays;
+    acuteWindow: number;
+    chronicWindow: number;
     lowThreshold: number;
     highThreshold: number;
     targetAcwr: number;

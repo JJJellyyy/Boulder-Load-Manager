@@ -11,21 +11,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
       multiplierPerGrade: 5,
     },
     speed: {
-      targetMinutesPerBoulder: 5,
-      exponent: 1.35,
-      minMultiplier: 0.7,
-      maxMultiplier: 4,
+      impactPercent: 40,
     },
     recovery: {
       personalMaxSleepHours: 8.5,
-      sleepPenalty: {
-        exponent: 2,
-        maxPenalty: 0.6,
-      },      stressPenalty: {
-        threshold: 7,
-        exponent: 1.5,
-        maxPenalty: 0.3,
-      },    },
+      sleepImpactPercent: 60,
+      stressImpactPercent: 15,
+    },
     ewmaWindows: [10, 15, 20, 25],
     acwr: {
       acuteWindow: 10,
@@ -41,31 +33,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
 export function clampSettings(input: AppSettings): AppSettings {
   const incoming = (input ?? DEFAULT_SETTINGS) as Partial<AppSettings>;
 
-  const legacyGrade = incoming.model?.gradeIntensity as
+  const legacyGrade = (incoming?.model?.gradeIntensity as
     | {
         base?: number;
         scale?: number;
         exponent?: number;
       }
-    | undefined;
-  const legacySpeed = incoming.model?.speed as
-    | {
-        baselineProblemsPerMinute?: number;
-        curveSteepness?: number;
-      }
-    | undefined;
-  const legacySleep = incoming.model?.recovery?.sleepPenalty as
-    | {
-        points?: Array<{ penalty: number }>;
-      }
-    | undefined;
-
-  const legacySpeedTargetMinutes = legacySpeed?.baselineProblemsPerMinute
-    ? 1 / Math.max(0.01, legacySpeed.baselineProblemsPerMinute)
-    : undefined;
-  const legacySleepMaxPenalty = legacySleep?.points?.length
-    ? Math.max(...legacySleep.points.map((point) => point.penalty))
-    : undefined;
+    | undefined);
 
   const next: AppSettings = {
     climberMaxGrade: incoming.climberMaxGrade ?? DEFAULT_SETTINGS.climberMaxGrade,
@@ -86,43 +60,22 @@ export function clampSettings(input: AppSettings): AppSettings {
       },
       speed: {
         ...DEFAULT_SETTINGS.model.speed,
-        targetMinutesPerBoulder:
-          incoming.model?.speed?.targetMinutesPerBoulder ??
-          legacySpeedTargetMinutes ??
-          DEFAULT_SETTINGS.model.speed.targetMinutesPerBoulder,
-        exponent:
-          incoming.model?.speed?.exponent ??
-          legacySpeed?.curveSteepness ??
-          DEFAULT_SETTINGS.model.speed.exponent,
-        minMultiplier:
-          incoming.model?.speed?.minMultiplier ?? DEFAULT_SETTINGS.model.speed.minMultiplier,
-        maxMultiplier:
-          incoming.model?.speed?.maxMultiplier ?? DEFAULT_SETTINGS.model.speed.maxMultiplier,
+        impactPercent: clamp(incoming.model?.speed?.impactPercent ?? DEFAULT_SETTINGS.model.speed.impactPercent, 0, 100),
       },
       recovery: {
         personalMaxSleepHours:
           incoming.model?.recovery?.personalMaxSleepHours ??
           DEFAULT_SETTINGS.model.recovery.personalMaxSleepHours,
-        sleepPenalty: {
-          exponent:
-            incoming.model?.recovery?.sleepPenalty?.exponent ??
-            DEFAULT_SETTINGS.model.recovery.sleepPenalty.exponent,
-          maxPenalty:
-            incoming.model?.recovery?.sleepPenalty?.maxPenalty ??
-            legacySleepMaxPenalty ??
-            DEFAULT_SETTINGS.model.recovery.sleepPenalty.maxPenalty,
-        },
-        stressPenalty: {
-          threshold:
-            incoming.model?.recovery?.stressPenalty?.threshold ??
-            DEFAULT_SETTINGS.model.recovery.stressPenalty.threshold,
-          exponent:
-            incoming.model?.recovery?.stressPenalty?.exponent ??
-            DEFAULT_SETTINGS.model.recovery.stressPenalty.exponent,
-          maxPenalty:
-            incoming.model?.recovery?.stressPenalty?.maxPenalty ??
-            DEFAULT_SETTINGS.model.recovery.stressPenalty.maxPenalty,
-        },
+        sleepImpactPercent: clamp(
+          incoming.model?.recovery?.sleepImpactPercent ?? DEFAULT_SETTINGS.model.recovery.sleepImpactPercent,
+          0,
+          100
+        ),
+        stressImpactPercent: clamp(
+          incoming.model?.recovery?.stressImpactPercent ?? DEFAULT_SETTINGS.model.recovery.stressImpactPercent,
+          0,
+          100
+        ),
       },
       ewmaWindows: incoming.model?.ewmaWindows ?? DEFAULT_SETTINGS.model.ewmaWindows,
       acwr: {
@@ -142,39 +95,27 @@ export function clampSettings(input: AppSettings): AppSettings {
   next.model.gradeIntensity.basePoints = clamp(next.model.gradeIntensity.basePoints, 1, 1000);
   next.model.gradeIntensity.multiplierPerGrade = clamp(next.model.gradeIntensity.multiplierPerGrade, 1.2, 8);
 
-  next.model.speed.targetMinutesPerBoulder = clamp(next.model.speed.targetMinutesPerBoulder, 0.5, 15);
-  next.model.speed.exponent = clamp(next.model.speed.exponent, 0.1, 4);
-  next.model.speed.minMultiplier = clamp(next.model.speed.minMultiplier, 0.1, 1.5);
-  next.model.speed.maxMultiplier = clamp(next.model.speed.maxMultiplier, next.model.speed.minMultiplier, 8);
+  next.model.speed.impactPercent = clamp(next.model.speed.impactPercent, 0, 100);
 
   next.model.recovery.personalMaxSleepHours = clamp(next.model.recovery.personalMaxSleepHours, 4, 12);
-  next.model.recovery.sleepPenalty.exponent = clamp(next.model.recovery.sleepPenalty.exponent, 0.5, 6);
-  next.model.recovery.sleepPenalty.maxPenalty = clamp(next.model.recovery.sleepPenalty.maxPenalty, 0, 0.95);
-  next.model.recovery.stressPenalty.threshold = clamp(next.model.recovery.stressPenalty.threshold, 0, 10);
-  next.model.recovery.stressPenalty.exponent = clamp(next.model.recovery.stressPenalty.exponent, 0.5, 6);
-  next.model.recovery.stressPenalty.maxPenalty = clamp(next.model.recovery.stressPenalty.maxPenalty, 0, 0.95);
+  next.model.recovery.sleepImpactPercent = clamp(next.model.recovery.sleepImpactPercent, 0, 100);
+  next.model.recovery.stressImpactPercent = clamp(next.model.recovery.stressImpactPercent, 0, 100);
 
-  const allowedWindows = [10, 15, 20, 25] as const;
-  const filteredWindows = next.model.ewmaWindows.filter((windowValue) =>
-    allowedWindows.includes(windowValue),
-  );
-  next.model.ewmaWindows = filteredWindows.length ? filteredWindows : [...DEFAULT_SETTINGS.model.ewmaWindows];
+  // Ensure ewmaWindows are valid integers and within range
+  next.model.ewmaWindows = next.model.ewmaWindows
+    .map((w) => Math.round(w))
+    .filter((w) => w >= 3 && w <= 60);
+  if (next.model.ewmaWindows.length === 0) {
+    next.model.ewmaWindows = [...DEFAULT_SETTINGS.model.ewmaWindows];
+  }
 
   next.model.acwr.lowThreshold = clamp(next.model.acwr.lowThreshold, 0.3, 1.5);
   next.model.acwr.highThreshold = clamp(next.model.acwr.highThreshold, next.model.acwr.lowThreshold + 0.05, 2.5);
+  next.model.acwr.acuteWindow = clamp(next.model.acwr.acuteWindow, 3, 60);
+  next.model.acwr.chronicWindow = clamp(next.model.acwr.chronicWindow, 3, 60);
+  next.model.acwr.targetAcwr = clamp(next.model.acwr.targetAcwr, 0.5, 1.5);
 
-  if (!allowedWindows.includes(next.model.acwr.acuteWindow)) {
-    next.model.acwr.acuteWindow = DEFAULT_SETTINGS.model.acwr.acuteWindow;
-  }
-
-  if (!allowedWindows.includes(next.model.acwr.chronicWindow)) {
-    next.model.acwr.chronicWindow = DEFAULT_SETTINGS.model.acwr.chronicWindow;
-  }
-
-  if (next.model.acwr.acuteWindow === next.model.acwr.chronicWindow) {
-    next.model.acwr.chronicWindow = next.model.acwr.acuteWindow === 25 ? 20 : 25;
-  }
-
+  // Add acute and chronic windows to the EWMA windows list
   if (!next.model.ewmaWindows.includes(next.model.acwr.acuteWindow)) {
     next.model.ewmaWindows = [...next.model.ewmaWindows, next.model.acwr.acuteWindow];
   }

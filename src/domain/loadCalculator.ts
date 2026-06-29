@@ -86,32 +86,31 @@ export function calculateGradeIntensity(problemGrade: Grade, settings: AppSettin
   return gradeToPoints(problemGrade, settings);
 }
 
-export function calculateSpeedMultiplier(totalProblems: number, durationMinutes: number, _settings: AppSettings): number {
+export function calculateSpeedMultiplier(totalProblems: number, durationMinutes: number, settings: AppSettings): number {
+  // Linear speed penalty: 10 min/boulder = 0% impact, 1 min/boulder = 100% impact
   const safeProblems = Math.max(1, totalProblems);
   const safeDuration = Math.max(1, durationMinutes);
   const minutesPerBoulder = safeDuration / safeProblems;
 
-  // Smooth cubic ramp: near-zero above 4 min/boulder, steep below 2 min/boulder.
-  // progress = 0 at 4+ min, 1 at 1 min. Cubic gives dramatic sub-2-min penalty.
-  const clampedMinutes = clamp(minutesPerBoulder, 1, 10);
-  const progress = clamp((4 - clampedMinutes) / 3, 0, 1);
-  return clamp(5 * Math.pow(progress, 3), 0, 5);
+  if (minutesPerBoulder >= 10) return 1;
+  if (minutesPerBoulder <= 1) return 1 + settings.model.speed.impactPercent / 100;
+  
+  // Linear interpolation: 10 min = 1x, 1 min = 1 + impactPercent%
+  const deficit = (10 - minutesPerBoulder) / 9; // 0 at 10 min, 1 at 1 min
+  return 1 + (settings.model.speed.impactPercent / 100) * deficit;
 }
 
 export function calculateSleepRecoveryMultiplier(actualSleepHours: number, settings: AppSettings): number {
+  // Linear sleep penalty: personalMaxSleep = 0% impact, 0 hours = 100% impact
   const personalMax = Math.max(0.1, settings.model.recovery.personalMaxSleepHours);
   const deficit = clamp((personalMax - actualSleepHours) / personalMax, 0, 1);
-  const penalty = settings.model.recovery.sleepPenalty.maxPenalty * Math.pow(deficit, settings.model.recovery.sleepPenalty.exponent);
-  return 1 + clamp(penalty, 0, settings.model.recovery.sleepPenalty.maxPenalty);
+  return 1 + (settings.model.recovery.sleepImpactPercent / 100) * deficit;
 }
 
 export function calculateStressMultiplier(stressLevel: number, settings: AppSettings): number {
-  const threshold = settings.model.recovery.stressPenalty.threshold;
-  if (stressLevel < threshold) return 1;
-  const maxStress = 10;
-  const deficit = clamp((stressLevel - threshold) / (maxStress - threshold), 0, 1);
-  const penalty = settings.model.recovery.stressPenalty.maxPenalty * Math.pow(deficit, settings.model.recovery.stressPenalty.exponent);
-  return 1 + clamp(penalty, 0, settings.model.recovery.stressPenalty.maxPenalty);
+  // Linear stress penalty: 0 stress = 0% impact, 10 stress = 100% impact
+  const deficit = clamp(stressLevel / 10, 0, 1);
+  return 1 + (settings.model.recovery.stressImpactPercent / 100) * deficit;
 }
 
 function getBoulderKey(holdType: HoldType, wallAngle: WallAngle): string {
@@ -254,16 +253,35 @@ export function buildSessionHistory(
   const acuteAlpha = 2 / (acuteWindow + 1);
   const chronicAlpha = 2 / (chronicWindow + 1);
 
+  const sessionsByDate = new Map<string, SessionInput[]>();
+  for (const session of sorted) {
+    const dayKey = session.createdAt.slice(0, 10);
+    const existing = sessionsByDate.get(dayKey) ?? [];
+    existing.push(session);
+    sessionsByDate.set(dayKey, existing);
+  }
+
+  const startDate = new Date(sorted[0].createdAt);
+  startDate.setUTCHours(0, 0, 0, 0);
+  const endDate = new Date(sorted[sorted.length - 1].createdAt);
+  endDate.setUTCHours(0, 0, 0, 0);
+
   let acute = 0;
   let chronic = 0;
   const all: HistoryPoint[] = [];
+  const currentDate = new Date(startDate);
 
-  for (const session of sorted) {
-    const load = calculateSessionLoad(session, settings).totalLoad;
+  while (currentDate <= endDate) {
+    const dayKey = currentDate.toISOString().slice(0, 10);
+    const daySessions = sessionsByDate.get(dayKey) ?? [];
+    const load = daySessions.reduce((sum, session) => sum + calculateSessionLoad(session, settings).totalLoad, 0);
+
     acute = acuteAlpha * load + (1 - acuteAlpha) * acute;
     chronic = chronicAlpha * load + (1 - chronicAlpha) * chronic;
     const acwr = chronic > 0 ? acute / chronic : 0;
-    all.push({ date: session.createdAt.slice(0, 10), load, acute, chronic, acwr });
+
+    all.push({ date: dayKey, load, acute, chronic, acwr });
+    currentDate.setUTCDate(currentDate.getUTCDate() + 1);
   }
 
   if (daysBack === null) return all;

@@ -1,10 +1,10 @@
-import type { EWMADays, EWMASnapshot } from "../types";
+import type { EWMASnapshot } from "../types";
 
-export function alphaFromWindow(windowDays: EWMADays): number {
+export function alphaFromWindow(windowDays: number): number {
   return 2 / (windowDays + 1);
 }
 
-export function applyEWMA(previous: number, value: number, windowDays: EWMADays): number {
+export function applyEWMA(previous: number, value: number, windowDays: number): number {
   const alpha = alphaFromWindow(windowDays);
   return alpha * value + (1 - alpha) * previous;
 }
@@ -13,7 +13,7 @@ export function updateSnapshot(
   previous: EWMASnapshot | undefined,
   key: string,
   load: number,
-  windows: EWMADays[],
+  windows: number[],
 ): EWMASnapshot {
   const base: EWMASnapshot = previous ?? {
     key,

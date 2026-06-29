@@ -25,6 +25,7 @@ import {
   calculateStressMultiplier,
   calculateSpeedMultiplier,
   calculateSessionLoad,
+  calculateGradeDistribution,
   gradeToDisplay,
   gradeToNumber,
   suggestedCapacityRange,
@@ -47,7 +48,6 @@ import {
   WALL_ANGLES,
   type AppSettings,
   type DriveBackupPayload,
-  type EWMADays,
   type EWMASnapshot,
   type Grade,
   type GradeDisplayUnit,
@@ -64,6 +64,7 @@ import {
 type TabName = "session" | "dashboard" | "strength" | "settings" | "history";
 
 interface SessionDraft {
+  sessionDate: string;
   durationMinutes: number;
   sleepHours: number;
   stress: number;
@@ -73,6 +74,7 @@ interface SessionDraft {
 
 function createSessionDraft(settings: AppSettings): SessionDraft {
   return {
+    sessionDate: todayIsoDate(),
     durationMinutes: 120,
     sleepHours: settings.model.recovery.personalMaxSleepHours,
     stress: 5,
@@ -168,20 +170,57 @@ function estimateOneRepMaxFromTopSet(
   return roundToIncrement(estimated, incrementKg);
 }
 
-function getEwmaValue(snapshot: EWMASnapshot, windowDays: EWMADays): number {
+function getEwmaValue(snapshot: EWMASnapshot, windowDays: number): number {
+  // For preset windows, return exact values
   if (windowDays === 10) {
     return snapshot.ewma10;
   }
-
   if (windowDays === 15) {
     return snapshot.ewma15;
   }
-
   if (windowDays === 20) {
     return snapshot.ewma20;
   }
+  if (windowDays === 25) {
+    return snapshot.ewma25;
+  }
 
-  return snapshot.ewma25;
+  // For custom windows, interpolate between nearest two preset windows
+  const presets = [10, 15, 20, 25];
+  const presetValues = [snapshot.ewma10, snapshot.ewma15, snapshot.ewma20, snapshot.ewma25];
+  
+  if (windowDays < 10) {
+    // Extrapolate below 10
+    const ratio = windowDays / 10;
+    return snapshot.ewma10 * ratio;
+  }
+  if (windowDays > 25) {
+    // Extrapolate above 25
+    const ratio = windowDays / 25;
+    return snapshot.ewma25 * ratio;
+  }
+
+  // Find bracketing windows
+  let below = presets[0];
+  let above = presets[presets.length - 1];
+  let belowIdx = 0;
+  let aboveIdx = presets.length - 1;
+
+  for (let i = 0; i < presets.length - 1; i++) {
+    if (presets[i] <= windowDays && windowDays <= presets[i + 1]) {
+      below = presets[i];
+      above = presets[i + 1];
+      belowIdx = i;
+      aboveIdx = i + 1;
+      break;
+    }
+  }
+
+  // Linear interpolation
+  const belowValue = presetValues[belowIdx];
+  const aboveValue = presetValues[aboveIdx];
+  const t = (windowDays - below) / (above - below);
+  return belowValue + t * (aboveValue - belowValue);
 }
 
 function getAcwrZone(acwr: number, lowThreshold: number, highThreshold: number): string {
@@ -323,12 +362,6 @@ function AcwrHistoryChart({
 
   const acwrLine = points.map((p, i) => `${toX(i)},${toY(p.acwr)}`).join(" ");
 
-  // Colored zone rectangles
-  const greenY1 = toY(highThreshold);
-  const greenY2 = toY(lowThreshold);
-  const yellowLoY1 = toY(lowThreshold);
-  const yellowHiY2 = toY(highThreshold);
-
   // X-axis date ticks: show ~5 labels
   const tickIndices: number[] = [];
   const step = Math.max(1, Math.floor(points.length / 5));
@@ -340,11 +373,11 @@ function AcwrHistoryChart({
 
   return (
     <svg className="acwr-history-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="ACWR history">
-      {/* Zone bands */}
-      <rect x={padL} y={greenY1} width={chartW} height={greenY2 - greenY1} fill="#22c55e" opacity="0.12" />
-      <rect x={padL} y={toY(maxAcwr)} width={chartW} height={Math.max(0, yellowLoY1 - toY(maxAcwr) - (chartH - yellowHiY2))} fill="transparent" />
+      {/* Zone bands - draw from bottom to top */}
       {/* Low zone (below low threshold) */}
       <rect x={padL} y={toY(lowThreshold)} width={chartW} height={Math.max(0, padT + chartH - toY(lowThreshold))} fill="#f59e0b" opacity="0.10" />
+      {/* Green zone (between thresholds) */}
+      <rect x={padL} y={toY(highThreshold)} width={chartW} height={Math.max(0, toY(lowThreshold) - toY(highThreshold))} fill="#22c55e" opacity="0.12" />
       {/* High zone (above high threshold) */}
       <rect x={padL} y={padT} width={chartW} height={Math.max(0, toY(highThreshold) - padT)} fill="#ef4444" opacity="0.10" />
       {/* Grid + threshold lines */}
@@ -382,6 +415,77 @@ function AcwrHistoryChart({
       <text x={padL + chartW - 92} y={16} fontSize="9" fill="currentColor" opacity="0.7">ACWR</text>
       <line x1={padL + chartW - 60} y1={12} x2={padL + chartW - 45} y2={12} stroke="#3b82f6" strokeWidth="1.5" strokeDasharray="4,2" />
       <text x={padL + chartW - 42} y={16} fontSize="9" fill="currentColor" opacity="0.7">Target</text>
+    </svg>
+  );
+}
+
+function EwmaWeightsChart() {
+  // EWMA weight visualization: shows how much each day's value contributes to the EWMA
+  // For window N, alpha = 2 / (N + 1)
+  // Weight for day d (0 = today) = alpha * (1 - alpha)^d
+  
+  const width = 600;
+  const height = 200;
+  const padL = 44;
+  const padR = 16;
+  const padT = 16;
+  const padB = 40;
+  const chartW = width - padL - padR;
+  const chartH = height - padT - padB;
+  
+  const windows: Array<[number, string]> = [[10, "#0f7f88"], [15, "#f97316"], [20, "#8b5cf6"], [25, "#ec4899"]];
+  const daysToShow = 30;
+  
+  // Helper to calculate EWMA weight at day d for window size
+  const getWeight = (dayIndex: number, windowSize: number): number => {
+    const alpha = 2 / (windowSize + 1);
+    return alpha * Math.pow(1 - alpha, dayIndex);
+  };
+  
+  // Calculate max weight for scaling
+  const maxWeight = Math.max(...windows.map(([win]) => getWeight(0, win)));
+  
+  const toY = (weight: number) => padT + chartH - (weight / maxWeight) * chartH;
+  const toX = (dayIndex: number) => padL + (dayIndex / (daysToShow - 1)) * chartW;
+  
+  return (
+    <svg className="ewma-weights-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="EWMA weights decay">
+      {/* Grid */}
+      {[0, 10, 20, 30].map((day) => (
+        <line key={`grid-${day}`} x1={toX(day)} y1={padT} x2={toX(day)} y2={padT + chartH} stroke="currentColor" strokeOpacity="0.1" strokeWidth="1" />
+      ))}
+      {/* Lines for each window */}
+      {windows.map(([windowSize, color]) => {
+        const points = Array.from({ length: daysToShow }, (_, i) => {
+          const weight = getWeight(i, windowSize);
+          return `${toX(i)},${toY(weight)}`;
+        }).join(" ");
+        
+        return (
+          <g key={`window-${windowSize}`}>
+            <polyline points={points} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.8" />
+          </g>
+        );
+      })}
+      {/* Axes */}
+      <line x1={padL} y1={padT} x2={padL} y2={padT + chartH} stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
+      <line x1={padL} y1={padT + chartH} x2={padL + chartW} y2={padT + chartH} stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
+      {/* Day labels */}
+      {[0, 10, 20, 30].map((day) => (
+        <text key={`day-${day}`} x={toX(day)} y={padT + chartH + 14} textAnchor="middle" fontSize="9" fill="currentColor" opacity="0.6">{day}d</text>
+      ))}
+      {/* Weight label */}
+      <text x={6} y={padT + 12} fontSize="9" fill="currentColor" opacity="0.6">Weight</text>
+      {/* Legend */}
+      {windows.map(([windowSize, color], idx) => {
+        const x = padL + 10 + idx * 120;
+        return (
+          <g key={`legend-${windowSize}`}>
+            <line x1={x} y1={padT + 2} x2={x + 12} y2={padT + 2} stroke={color} strokeWidth="2" opacity="0.8" />
+            <text x={x + 18} y={padT + 6} fontSize="9" fill="currentColor" opacity="0.7">{windowSize}d</text>
+          </g>
+        );
+      })}
     </svg>
   );
 }
@@ -477,7 +581,7 @@ function App() {
   const [plannerGrade, setPlannerGrade] = useState<Grade>("V5");
   const [plannerCount, setPlannerCount] = useState<number>(20);
   const [plannerDuration, setPlannerDuration] = useState<number>(120);
-
+  const [plannerDate, setPlannerDate] = useState<string>(todayIsoDate());
   const [plannerSleep, setPlannerSleep] = useState<number>(8);
   const [plannerStress, setPlannerStress] = useState<number>(5);
 
@@ -617,16 +721,101 @@ function App() {
   const plannerPrediction = useMemo(() => {
     const snapshots = Object.values(ewmaSnapshots);
     if (snapshots.length === 0) return null;
-    const prevAcute = snapshots.reduce((s, snap) => s + getEwmaValue(snap, settings.model.acwr.acuteWindow), 0);
-    const prevChronic = snapshots.reduce((s, snap) => s + getEwmaValue(snap, settings.model.acwr.chronicWindow), 0);
+    let prevAcute = snapshots.reduce((s, snap) => s + getEwmaValue(snap, settings.model.acwr.acuteWindow), 0);
+    let prevChronic = snapshots.reduce((s, snap) => s + getEwmaValue(snap, settings.model.acwr.chronicWindow), 0);
     if (prevChronic === 0) return null;
 
     const acuteWindow = settings.model.acwr.acuteWindow;
+    const chronicWindow = settings.model.acwr.chronicWindow;
+    const acuteAlpha = 2 / (acuteWindow + 1);
+    const chronicAlpha = 2 / (chronicWindow + 1);
+
+    // Apply time decay from last session to planned date
+    if (sessions.length > 0) {
+      const lastSession = sessions[sessions.length - 1];
+      const lastSessionDate = new Date(lastSession.createdAt);
+      const lastDate = new Date(lastSessionDate.getUTCFullYear(), lastSessionDate.getUTCMonth(), lastSessionDate.getUTCDate());
+      
+      const plannedDate = new Date(`${plannerDate}T00:00:00Z`);
+      const daysBetween = Math.max(0, Math.floor((plannedDate.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24)));
+      
+      // Apply decay for each day between last session and planned session
+      for (let i = 0; i < daysBetween; i++) {
+        prevAcute = (1 - acuteAlpha) * prevAcute;
+        prevChronic = (1 - chronicAlpha) * prevChronic;
+      }
+    }
+
     const actualLoad = estimateSimpleLoad(plannerCount, plannerDuration, plannerGrade, plannerSleep, plannerStress, settings);
-    const newAcute = (2 / (acuteWindow + 1)) * actualLoad + (1 - 2 / (acuteWindow + 1)) * prevAcute;
+    const newAcute = acuteAlpha * actualLoad + (1 - acuteAlpha) * prevAcute;
     const predAcwr = prevChronic > 0 ? newAcute / prevChronic : 0;
     return { predAcwr, actualLoad };
-  }, [ewmaSnapshots, settings, plannerSleep, plannerStress, plannerGrade, plannerCount, plannerDuration]);
+  }, [ewmaSnapshots, settings, plannerSleep, plannerStress, plannerGrade, plannerCount, plannerDuration, plannerDate, sessions]);
+
+  const gradeDistribution = useMemo(() => {
+    if (!plannerPrediction || plannerPrediction.actualLoad <= 0) return {};
+    return calculateGradeDistribution(plannerPrediction.actualLoad, plannerDuration, plannerSleep, plannerStress, settings);
+  }, [plannerPrediction, plannerDuration, plannerSleep, plannerStress, settings]);
+
+  // Boulder distribution: show count of each grade centered around planner grade (normal distribution ±2)
+  const boulderDistribution = useMemo(() => {
+    if (!plannerPrediction || plannerPrediction.actualLoad <= 0) return [];
+    
+    const targetLoad = plannerPrediction.actualLoad;
+    const gradeNum = gradeToNumber(plannerGrade);
+    
+    // Get grades from -2 to +1 relative to center
+    const gradesInRange: Array<{ grade: Grade; offset: number }> = [];
+    for (let offset = -2; offset <= 1; offset++) {
+      const targetNum = gradeNum + offset;
+      const grade = GRADES.find((g) => gradeToNumber(g) === targetNum);
+      if (grade) {
+        gradesInRange.push({ grade, offset });
+      }
+    }
+    
+    if (gradesInRange.length === 0) return [];
+    
+    // Calculate normal distribution weights (bell curve centered at offset=0)
+    // Using Gaussian: weight = exp(-(offset^2 / 2)) for std dev = 1
+    const weights = gradesInRange.map(({ offset }) => Math.exp(-0.5 * offset * offset));
+    const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+    
+    // Calculate intensities for each grade
+    const distribution: Array<{ grade: Grade; count: number; intensity: number; offset: number }> = [];
+    let totalIntensity = 0;
+    
+    for (let i = 0; i < gradesInRange.length; i++) {
+      const { grade, offset } = gradesInRange[i];
+      const normalizedWeight = weights[i] / totalWeight;
+      const count = Math.round(plannerCount * normalizedWeight);
+      const intensity = calculateGradeIntensity(grade, settings);
+      distribution.push({ grade, count, intensity, offset });
+      totalIntensity += count * intensity;
+    }
+    
+    // Scale all counts to match target load
+    if (totalIntensity > 0) {
+      const scale = targetLoad / totalIntensity;
+      let totalCount = 0;
+      for (let i = 0; i < distribution.length; i++) {
+        distribution[i].count = Math.round(distribution[i].count * scale);
+        // Cap +1 grade at 15% of total
+        if (distribution[i].offset === 1) {
+          distribution[i].count = Math.min(distribution[i].count, Math.round(plannerCount * 0.15));
+        }
+        totalCount += distribution[i].count;
+      }
+      // Redistribute remaining count to center grade
+      const surplus = plannerCount - totalCount;
+      const centerIdx = distribution.findIndex((d) => d.offset === 0);
+      if (centerIdx >= 0) {
+        distribution[centerIdx].count += surplus;
+      }
+    }
+    
+    return distribution.map(({ grade, count }) => ({ grade, count })).filter((d) => d.count > 0);
+  }, [plannerPrediction, plannerGrade, plannerCount, settings]);
 
   const acwrExample = useMemo(() => {
     const dummyProblems = 24;
@@ -1021,7 +1210,9 @@ function App() {
   function beginEditSession(session: SessionInput): void {
     setEditingSessionId(session.id);
     setEditingSessionCreatedAt(session.createdAt);
+    const sessionDateIso = session.createdAt.slice(0, 10); // Extract YYYY-MM-DD from ISO timestamp
     setDraft({
+      sessionDate: sessionDateIso,
       durationMinutes: session.durationMinutes,
       sleepHours: session.sleepHours,
       stress: session.stress,
@@ -1047,45 +1238,68 @@ function App() {
       (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
     );
 
-    // Bootstrap: seed EWMA with session average when fewer sessions than longest window
-    const maxWindow = Math.max(...settingsForCalc.model.ewmaWindows);
-    const sumByKey: Record<string, number> = {};
-    const countByKey: Record<string, number> = {};
+    const windows = [...new Set(settingsForCalc.model.ewmaWindows)];
+    const sessionsByDate = new Map<string, SessionInput[]>();
+    const allKeys = new Set<string>();
+
     for (const sessionItem of ordered) {
+      const dayKey = sessionItem.createdAt.slice(0, 10);
+      const existing = sessionsByDate.get(dayKey) ?? [];
+      existing.push(sessionItem);
+      sessionsByDate.set(dayKey, existing);
+
       const sessionCalc = calculateSessionLoad(sessionItem, settingsForCalc);
       for (const entry of sessionCalc.byBoulderType) {
-        sumByKey[entry.key] = (sumByKey[entry.key] ?? 0) + entry.adjustedLoad;
-        countByKey[entry.key] = (countByKey[entry.key] ?? 0) + 1;
+        allKeys.add(entry.key);
       }
     }
 
     const nextSnapshots: Record<string, EWMASnapshot> = {};
-
-    if (ordered.length < maxWindow && ordered.length > 0) {
-      for (const key of Object.keys(sumByKey)) {
-        const avg = sumByKey[key] / countByKey[key];
-        nextSnapshots[key] = {
-          key,
-          ewma10: avg,
-          ewma15: avg,
-          ewma20: avg,
-          ewma25: avg,
-          updatedAt: new Date().toISOString(),
-        };
-      }
+    for (const key of allKeys) {
+      nextSnapshots[key] = {
+        key,
+        ewma10: 0,
+        ewma15: 0,
+        ewma20: 0,
+        ewma25: 0,
+        updatedAt: new Date().toISOString(),
+      };
     }
 
-    for (const sessionItem of ordered) {
-      const sessionCalc = calculateSessionLoad(sessionItem, settingsForCalc);
-      for (const entry of sessionCalc.byBoulderType) {
-        const updated = updateSnapshot(
-          nextSnapshots[entry.key],
-          entry.key,
-          entry.adjustedLoad,
-          settingsForCalc.model.ewmaWindows,
-        );
-        nextSnapshots[entry.key] = updated;
+    if (ordered.length === 0) {
+      await Promise.all(Object.values(nextSnapshots).map((snapshot) => saveEwmaSnapshot(snapshot)));
+      return nextSnapshots;
+    }
+
+    const startDate = new Date(ordered[0].createdAt);
+    startDate.setUTCHours(0, 0, 0, 0);
+    const endDate = new Date(ordered[ordered.length - 1].createdAt);
+    endDate.setUTCHours(0, 0, 0, 0);
+
+    const currentDate = new Date(startDate);
+    while (currentDate <= endDate) {
+      const dayKey = currentDate.toISOString().slice(0, 10);
+      const daySessions = sessionsByDate.get(dayKey) ?? [];
+      const loadsByKey: Record<string, number> = {};
+
+      for (const sessionItem of daySessions) {
+        const sessionCalc = calculateSessionLoad(sessionItem, settingsForCalc);
+        for (const entry of sessionCalc.byBoulderType) {
+          loadsByKey[entry.key] = (loadsByKey[entry.key] ?? 0) + entry.adjustedLoad;
+        }
       }
+
+      for (const key of allKeys) {
+        const updated = updateSnapshot(
+          nextSnapshots[key],
+          key,
+          loadsByKey[key] ?? 0,
+          windows,
+        );
+        nextSnapshots[key] = updated;
+      }
+
+      currentDate.setUTCDate(currentDate.getUTCDate() + 1);
     }
 
     await Promise.all(Object.values(nextSnapshots).map((snapshot) => saveEwmaSnapshot(snapshot)));
@@ -1339,9 +1553,12 @@ function App() {
 
     const isEditing = Boolean(editingSessionId);
 
+    // Convert session date (YYYY-MM-DD) to ISO timestamp at noon UTC
+    const sessionDateIso = `${draft.sessionDate}T12:00:00Z`;
+
     const session: SessionInput = {
       id: editingSessionId ?? getId(),
-      createdAt: editingSessionCreatedAt ?? new Date().toISOString(),
+      createdAt: editingSessionCreatedAt ?? sessionDateIso,
       durationMinutes: draft.durationMinutes,
       sleepHours: draft.sleepHours,
       stress: draft.stress,
@@ -1529,6 +1746,16 @@ function App() {
             )}
             <div className="field-grid">
               <label>
+                Session date
+                <input
+                  type="date"
+                  value={draft.sessionDate}
+                  onChange={(event) =>
+                    setDraft((previous) => ({ ...previous, sessionDate: event.target.value }))
+                  }
+                />
+              </label>
+              <label>
                 Duration (minutes)
                 <NumberInput
                   value={draft.durationMinutes}
@@ -1699,6 +1926,10 @@ function App() {
               <>
                 <div className="planner-inputs-row">
                   <label className="planner-input-label">
+                    Session Date
+                    <input type="date" value={plannerDate} onChange={(e) => setPlannerDate(e.target.value)} />
+                  </label>
+                  <label className="planner-input-label">
                     Sleep (h)
                     <NumberInput value={plannerSleep} min={0} max={14} step={0.5} onCommit={setPlannerSleep} />
                   </label>
@@ -1743,6 +1974,60 @@ function App() {
                     </span>
                   </div>
                 </div>
+
+                {plannerPrediction && Object.keys(gradeDistribution).length > 0 && (
+                  <div className="grade-distribution">
+                    <h3>Alternative Grade Distributions</h3>
+                    <p>Same load ({plannerPrediction.actualLoad.toFixed(0)}), different grade mixes:</p>
+                    <svg width="100%" height="250" className="grade-dist-chart">
+                      {(() => {
+                        const sortedGrades = GRADES.filter((g) => gradeDistribution[g] && gradeDistribution[g] > 0).sort(
+                          (a, b) => gradeToNumber(a) - gradeToNumber(b)
+                        );
+                        if (sortedGrades.length === 0) return null;
+                        
+                        const maxCount = Math.max(...sortedGrades.map((g) => gradeDistribution[g]));
+                        const chartHeight = 200;
+                        const chartPadding = 20;
+                        const barWidth = Math.max(30, Math.floor((window.innerWidth - 60) / sortedGrades.length * 0.8));
+                        const barSpacing = Math.floor((window.innerWidth - 60) / sortedGrades.length);
+                        
+                        return sortedGrades.map((grade, idx) => {
+                          const count = gradeDistribution[grade];
+                          const barHeight = (count / maxCount) * chartHeight;
+                          const x = chartPadding + idx * barSpacing + (barSpacing - barWidth) / 2;
+                          const y = chartPadding + chartHeight - barHeight;
+                          
+                          return (
+                            <g key={grade}>
+                              <rect x={x} y={y} width={barWidth} height={barHeight} fill="#8b7355" opacity="0.7" rx="4" />
+                              <text x={x + barWidth / 2} y={y - 5} textAnchor="middle" fontSize="12" fontWeight="bold" fill="#fff">
+                                {count}
+                              </text>
+                              <text x={x + barWidth / 2} y={chartPadding + chartHeight + 20} textAnchor="middle" fontSize="11" fill="#000">
+                                {gradeToDisplay(grade, settings.gradeDisplayUnit)}
+                              </text>
+                            </g>
+                          );
+                        });
+                      })()}
+                    </svg>
+                  </div>
+                )}
+
+                {boulderDistribution.length > 0 && (
+                  <div className="grade-distribution">
+                    <h3>Suggested Boulder Breakdown</h3>
+                    <p>Distribute your {plannerCount} boulders across grades to hit {plannerPrediction.actualLoad.toFixed(0)} load:</p>
+                    <div className="boulder-breakdown">
+                      {boulderDistribution.map((item, idx) => (
+                        <div key={idx} className="breakdown-item">
+                          <strong>{item.count}×</strong> {gradeToDisplay(item.grade, settings.gradeDisplayUnit)}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 
               </>
             )}
@@ -2124,112 +2409,80 @@ function App() {
                 />
               </label>
               <label>
-                Speed model
-                <input value="Fixed: 10 min = x0, 1 min = x5 (exponential)" readOnly />
-              </label>
-              <label>
-                Sleep penalty exponent
-                <NumberInput
-                  value={settings.model.recovery.sleepPenalty.exponent}
-                  min={0.1}
-                  max={10}
-                  step={0.1}
-                  onCommit={(value) =>
+                Speed impact (% increase at 1 min/boulder)
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={settings.model.speed.impactPercent}
+                  onChange={(e) =>
                     patchSettings((next) => {
-                      next.model.recovery.sleepPenalty.exponent = value;
+                      next.model.speed.impactPercent = Number(e.target.value);
                     })
                   }
                 />
+                <span className="range-value">{settings.model.speed.impactPercent}%</span>
               </label>
               <label>
-                Max sleep penalty
-                <NumberInput
-                  value={settings.model.recovery.sleepPenalty.maxPenalty}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  onCommit={(value) =>
+                Sleep impact (% increase at 0 hours)
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={settings.model.recovery.sleepImpactPercent}
+                  onChange={(e) =>
                     patchSettings((next) => {
-                      next.model.recovery.sleepPenalty.maxPenalty = value;
+                      next.model.recovery.sleepImpactPercent = Number(e.target.value);
                     })
                   }
                 />
+                <span className="range-value">{settings.model.recovery.sleepImpactPercent}%</span>
               </label>
               <label>
-                Stress threshold (0-10 scale)
-                <NumberInput
-                  value={settings.model.recovery.stressPenalty.threshold}
-                  min={0}
-                  max={10}
-                  step={0.5}
-                  onCommit={(value) =>
+                Stress impact (% increase at 10/10 stress)
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={settings.model.recovery.stressImpactPercent}
+                  onChange={(e) =>
                     patchSettings((next) => {
-                      next.model.recovery.stressPenalty.threshold = value;
+                      next.model.recovery.stressImpactPercent = Number(e.target.value);
                     })
                   }
                 />
+                <span className="range-value">{settings.model.recovery.stressImpactPercent}%</span>
               </label>
               <label>
-                Stress penalty exponent
+                ACWR acute window (days)
                 <NumberInput
-                  value={settings.model.recovery.stressPenalty.exponent}
-                  min={0.1}
-                  max={10}
-                  step={0.1}
-                  onCommit={(value) =>
-                    patchSettings((next) => {
-                      next.model.recovery.stressPenalty.exponent = value;
-                    })
-                  }
-                />
-              </label>
-              <label>
-                Max stress penalty
-                <NumberInput
-                  value={settings.model.recovery.stressPenalty.maxPenalty}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  onCommit={(value) =>
-                    patchSettings((next) => {
-                      next.model.recovery.stressPenalty.maxPenalty = value;
-                    })
-                  }
-                />
-              </label>
-              <label>
-                ACWR acute window
-                <select
                   value={settings.model.acwr.acuteWindow}
-                  onChange={(event) =>
+                  min={3}
+                  max={60}
+                  step={1}
+                  onCommit={(value) =>
                     patchSettings((next) => {
-                      next.model.acwr.acuteWindow = Number(event.target.value) as EWMADays;
+                      next.model.acwr.acuteWindow = Math.round(value);
                     })
                   }
-                >
-                  {[10, 15, 20, 25].map((windowValue) => (
-                    <option key={`acute-${windowValue}`} value={windowValue}>
-                      {windowValue}
-                    </option>
-                  ))}
-                </select>
+                />
               </label>
               <label>
-                ACWR chronic window
-                <select
+                ACWR chronic window (days)
+                <NumberInput
                   value={settings.model.acwr.chronicWindow}
-                  onChange={(event) =>
+                  min={3}
+                  max={60}
+                  step={1}
+                  onCommit={(value) =>
                     patchSettings((next) => {
-                      next.model.acwr.chronicWindow = Number(event.target.value) as EWMADays;
+                      next.model.acwr.chronicWindow = Math.round(value);
                     })
                   }
-                >
-                  {[10, 15, 20, 25].map((windowValue) => (
-                    <option key={`chronic-${windowValue}`} value={windowValue}>
-                      {windowValue}
-                    </option>
-                  ))}
-                </select>
+                />
               </label>
               <label>
                 ACWR low threshold
@@ -2293,6 +2546,35 @@ function App() {
             <button type="button" className="danger" onClick={() => setSettings(DEFAULT_SETTINGS)}>
               ↺ Revert All Settings To Default
             </button>
+
+            <h3>Grade Intensity Conversion</h3>
+            <p>Shows relative difficulty: 1 V6 = X × V5 (depends on multiplier: {settings.model.gradeIntensity.multiplierPerGrade.toFixed(2)}).</p>
+            <table className="grade-conversion-table">
+              <thead>
+                <tr>
+                  <th>Grade</th>
+                  <th>Intensity</th>
+                  <th>Relative to V0</th>
+                  <th>= How many V5s</th>
+                </tr>
+              </thead>
+              <tbody>
+                {GRADES.map((g) => {
+                  const intensity = calculateGradeIntensity(g, settings);
+                  const v5Intensity = calculateGradeIntensity("V5" as Grade, settings);
+                  const relativeToV0 = intensity / settings.model.gradeIntensity.basePoints;
+                  const equivalentV5s = intensity / v5Intensity;
+                  return (
+                    <tr key={g}>
+                      <td>{gradeToDisplay(g, settings.gradeDisplayUnit)}</td>
+                      <td>{intensity.toFixed(1)}</td>
+                      <td>{relativeToV0.toFixed(2)}x</td>
+                      <td>{equivalentV5s.toFixed(2)}x</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
 
             <h3>Data Export / Import</h3>
             <p>Download complete backup as JSON, or re-import to restore all data (same format as Google Drive).</p>
@@ -2385,6 +2667,10 @@ function App() {
               ACWR = Acute EWMA / Chronic EWMA = {acwrExample.nextAcuteEwma.toFixed(2)} / {" "}
               {acwrExample.nextChronicEwma.toFixed(2)} = {acwrExample.nextAcwr.toFixed(2)}
             </p>
+
+            <h3>EWMA Weight Distribution</h3>
+            <p>Shows how much each day's load contributes to the EWMA calculation. Shorter windows (10d) weight recent days more heavily.</p>
+            <EwmaWeightsChart />
 
             <h3>Model Curves</h3>
             <div className="curve-grid">
