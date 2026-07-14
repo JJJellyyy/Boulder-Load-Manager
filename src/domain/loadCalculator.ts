@@ -319,15 +319,16 @@ export function buildMovingAverageSeries(history: HistoryPoint[], windowDays: nu
   if (history.length === 0 || windowDays <= 0) return [];
 
   const points: MovingAveragePoint[] = [];
-  const rolling: number[] = [];
+  const window: number[] = [];
 
   for (const point of history) {
-    rolling.push(point.load);
-    if (rolling.length > windowDays) {
-      rolling.shift();
+    window.push(point.load);
+    if (window.length > windowDays) {
+      window.shift();
     }
-    const average = rolling.reduce((sum, value) => sum + value, 0) / rolling.length;
-    points.push({ date: point.date, average });
+
+    const total = window.reduce((sum, value) => sum + value, 0);
+    points.push({ date: point.date, average: total });
   }
 
   return points;

@@ -492,11 +492,11 @@ function MovingAverageLoadChart({ points, rangeDays }: { points: HistoryPoint[];
       ))}
       <text x={padL + chartW / 2} y={height - 4} textAnchor="middle" fontSize="10" fill="currentColor" opacity="0.7">Date</text>
       <text x={10} y={padT + chartH / 2} textAnchor="middle" fontSize="10" fill="currentColor" opacity="0.7" transform={`rotate(-90, 10, ${padT + chartH / 2})`}>Absolute Load</text>
-      <text x={padL + chartW - 12} y={padT + 14} textAnchor="end" fontSize="10" fill="currentColor" opacity="0.7">Higher smoothing = slower response</text>
+      <text x={padL + chartW - 12} y={padT + 14} textAnchor="end" fontSize="10" fill="currentColor" opacity="0.7">Prior-window total load</text>
       {seriesWithVisiblePoints.map((serie, index) => (
         <g key={`legend-${serie.window}`}>
           <line x1={padL + 10} y1={padT + 18 + index * 14} x2={padL + 28} y2={padT + 18 + index * 14} stroke={serie.color} strokeWidth="2.2" />
-          <text x={padL + 34} y={padT + 22 + index * 14} fontSize="10" fill="currentColor" opacity="0.75">{serie.window}-day MA</text>
+          <text x={padL + 34} y={padT + 22 + index * 14} fontSize="10" fill="currentColor" opacity="0.75">{serie.window}-day total</text>
         </g>
       ))}
     </svg>
@@ -2093,7 +2093,7 @@ function App() {
                 <option value="all">All time</option>
               </select>
             </div>
-            <p className="muted-hint">Daily absolute load smoothed with 7-, 14-, and 28-day moving averages.</p>
+            <p className="muted-hint">Daily absolute load totals over the prior 7-, 14-, and 28-day windows.</p>
             {sessionHistory.length < 2 ? (
               <p>Log at least 2 sessions to see the moving-average graph.</p>
             ) : (

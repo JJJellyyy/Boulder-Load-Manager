@@ -24,7 +24,7 @@ export const FONT_BY_GRADE: Record<(typeof GRADES)[number], string> = {
   V1: "5",
   V2: "5+",
   V3: "6A",
-  V4: "6A+",
+  V4: "6B",
   V5: "6C",
   V6: "7A",
   V7: "7A+",
