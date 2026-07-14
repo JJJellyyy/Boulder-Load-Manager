@@ -232,6 +232,11 @@ export interface HistoryPoint {
   acwr: number;
 }
 
+export interface MovingAveragePoint {
+  date: string;
+  average: number;
+}
+
 export function getSessionDayKey(session: SessionInput): string {
   const createdDay = session.createdAt?.slice(0, 10);
   if (createdDay && /^\d{4}-\d{2}-\d{2}$/.test(createdDay)) {
@@ -308,6 +313,17 @@ export function buildSessionHistory(
   const cutoffMs = Date.now() - daysBack * 24 * 60 * 60 * 1000;
   const cutoffDate = new Date(cutoffMs).toISOString().slice(0, 10);
   return all.filter((point) => point.date >= cutoffDate);
+}
+
+export function buildMovingAverageSeries(history: HistoryPoint[], windowDays: number): MovingAveragePoint[] {
+  if (history.length === 0 || windowDays <= 0) return [];
+
+  return history.map((point, index) => {
+    const start = Math.max(0, index - windowDays + 1);
+    const slice = history.slice(start, index + 1);
+    const average = slice.reduce((sum, item) => sum + item.load, 0) / slice.length;
+    return { date: point.date, average };
+  }).slice(windowDays - 1);
 }
 
 export function suggestedCapacityRange(climberMaxGrade: Grade): { min: number; max: number } {

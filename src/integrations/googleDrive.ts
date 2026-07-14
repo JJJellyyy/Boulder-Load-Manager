@@ -166,24 +166,6 @@ async function deleteDriveFile(accessToken: string, fileId: string): Promise<voi
   if (!response.ok) throw new Error("Failed to delete old backup file from Google Drive.");
 }
 
-function createMultipartBody(payload: DriveBackupPayload): { body: string; boundary: string } {
-  const boundary = `boundary_${Date.now()}`;
-  const metadata = { name: BACKUP_BASE_NAME + ".json", mimeType: "application/json", parents: ["root"] };
-  const body = [
-    `--${boundary}`,
-    "Content-Type: application/json; charset=UTF-8",
-    "",
-    JSON.stringify(metadata),
-    `--${boundary}`,
-    "Content-Type: application/json; charset=UTF-8",
-    "",
-    JSON.stringify(payload),
-    `--${boundary}--`,
-    "",
-  ].join("\r\n");
-  return { body, boundary };
-}
-
 export async function uploadBackupToGoogleDrive(
   accessToken: string,
   payload: DriveBackupPayload,

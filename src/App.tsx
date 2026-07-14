@@ -31,6 +31,7 @@ import {
   suggestedCapacityRange,
   estimateSimpleLoad,
   buildSessionHistory,
+  buildMovingAverageSeries,
   getSessionDayKey,
   type HistoryPoint,
 } from "./domain/loadCalculator";
@@ -416,6 +417,68 @@ function AcwrHistoryChart({
       <text x={padL + chartW - 92} y={16} fontSize="9" fill="currentColor" opacity="0.7">ACWR</text>
       <line x1={padL + chartW - 60} y1={12} x2={padL + chartW - 45} y2={12} stroke="#3b82f6" strokeWidth="1.5" strokeDasharray="4,2" />
       <text x={padL + chartW - 42} y={16} fontSize="9" fill="currentColor" opacity="0.7">Target</text>
+    </svg>
+  );
+}
+
+function MovingAverageLoadChart({ points }: { points: HistoryPoint[] }) {
+  const width = 680;
+  const height = 260;
+  const padL = 50;
+  const padR = 16;
+  const padT = 16;
+  const padB = 44;
+  const chartW = width - padL - padR;
+  const chartH = height - padT - padB;
+
+  const windows = [5, 7, 10, 14] as const;
+  const colors = ["#0ea5e9", "#f59e0b", "#22c55e", "#8b5cf6"];
+  const series = windows.map((window, index) => ({
+    window,
+    color: colors[index],
+    points: buildMovingAverageSeries(points, window).map((item) => ({ date: item.date, value: item.average })),
+  }));
+
+  const maxValue = Math.max(1, ...series.flatMap((serie) => serie.points.map((point) => point.value)));
+  const toX = (index: number) => padL + (index / Math.max(1, series[0].points.length - 1)) * chartW;
+  const toY = (value: number) => padT + chartH - (value / maxValue) * chartH;
+
+  const xLabels = series[0]?.points ?? [];
+  const tickIndices = xLabels.reduce<number[]>((acc, _, index) => {
+    if (index === 0 || index === xLabels.length - 1 || index % Math.max(1, Math.floor(xLabels.length / 5)) === 0) {
+      acc.push(index);
+    }
+    return acc;
+  }, []);
+
+  return (
+    <svg className="acwr-history-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Moving average load history">
+      <line x1={padL} y1={padT + chartH} x2={padL + chartW} y2={padT + chartH} stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
+      <line x1={padL} y1={padT} x2={padL} y2={padT + chartH} stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
+      {series.map((serie) => {
+        const polyline = serie.points.map((point, index) => `${toX(index)},${toY(point.value)}`).join(" ");
+        return (
+          <g key={serie.window}>
+            <polyline points={polyline} fill="none" stroke={serie.color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+            {serie.points.map((point, index) => (
+              <circle key={`${serie.window}-${index}`} cx={toX(index)} cy={toY(point.value)} r="2.5" fill={serie.color} opacity="0.85" />
+            ))}
+          </g>
+        );
+      })}
+      {tickIndices.map((index) => (
+        <text key={index} x={toX(index)} y={padT + chartH + 16} textAnchor="middle" fontSize="9" fill="currentColor" opacity="0.6">
+          {xLabels[index]?.date.slice(5) ?? ""}
+        </text>
+      ))}
+      <text x={padL + chartW / 2} y={height - 4} textAnchor="middle" fontSize="10" fill="currentColor" opacity="0.7">Date</text>
+      <text x={10} y={padT + chartH / 2} textAnchor="middle" fontSize="10" fill="currentColor" opacity="0.7" transform={`rotate(-90, 10, ${padT + chartH / 2})`}>Absolute Load</text>
+      {series.map((serie, index) => (
+        <g key={`legend-${serie.window}`}>
+          <line x1={padL + 10} y1={padT + 18 + index * 14} x2={padL + 28} y2={padT + 18 + index * 14} stroke={serie.color} strokeWidth="2.2" />
+          <text x={padL + 34} y={padT + 22 + index * 14} fontSize="10" fill="currentColor" opacity="0.75">{serie.window}-day MA</text>
+        </g>
+      ))}
     </svg>
   );
 }
@@ -1965,6 +2028,17 @@ function App() {
                 highThreshold={settings.model.acwr.highThreshold}
                 targetAcwr={settings.model.acwr.targetAcwr}
               />
+            )}
+          </article>
+
+          {/* Absolute load moving averages */}
+          <article className="panel full-width">
+            <h2>Absolute Load Moving Averages</h2>
+            <p className="muted-hint">Daily absolute load smoothed with 5-, 7-, 10-, and 14-day moving averages.</p>
+            {sessionHistory.length < 2 ? (
+              <p>Log at least 2 sessions to see the moving-average graph.</p>
+            ) : (
+              <MovingAverageLoadChart points={sessionHistory} />
             )}
           </article>
 
