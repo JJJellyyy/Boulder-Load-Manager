@@ -421,7 +421,7 @@ function AcwrHistoryChart({
   );
 }
 
-function MovingAverageLoadChart({ points }: { points: HistoryPoint[] }) {
+function MovingAverageLoadChart({ points, rangeDays }: { points: HistoryPoint[]; rangeDays: number | null }) {
   const width = 680;
   const height = 260;
   const padL = 50;
@@ -431,7 +431,7 @@ function MovingAverageLoadChart({ points }: { points: HistoryPoint[] }) {
   const chartW = width - padL - padR;
   const chartH = height - padT - padB;
 
-  const windows = [7, 14, 21, 28] as const;
+  const windows = [7, 14, 28] as const;
   const colors = ["#0ea5e9", "#f59e0b", "#22c55e", "#8b5cf6"];
   const series = windows.map((window, index) => ({
     window,
@@ -439,13 +439,22 @@ function MovingAverageLoadChart({ points }: { points: HistoryPoint[] }) {
     points: buildMovingAverageSeries(points, window).map((item) => ({ date: item.date, value: item.average })),
   }));
 
-  const maxValue = Math.max(1, ...series.flatMap((serie) => serie.points.map((point) => point.value)));
-  const minValue = Math.min(0, ...series.flatMap((serie) => serie.points.map((point) => point.value)));
+  const visiblePoints = rangeDays === null
+    ? points
+    : points.slice(Math.max(0, points.length - rangeDays));
+
+  const seriesWithVisiblePoints = series.map((serie) => ({
+    ...serie,
+    points: buildMovingAverageSeries(visiblePoints, serie.window).map((item) => ({ date: item.date, value: item.average })),
+  }));
+
+  const maxValue = Math.max(1, ...seriesWithVisiblePoints.flatMap((serie) => serie.points.map((point) => point.value)));
+  const minValue = Math.min(0, ...seriesWithVisiblePoints.flatMap((serie) => serie.points.map((point) => point.value)));
   const ySpan = Math.max(1, maxValue - minValue);
-  const toX = (index: number) => padL + (index / Math.max(1, series[0].points.length - 1)) * chartW;
+  const toX = (index: number) => padL + (index / Math.max(1, seriesWithVisiblePoints[0].points.length - 1)) * chartW;
   const toY = (value: number) => padT + chartH - ((value - minValue) / ySpan) * chartH;
 
-  const xLabels = series[0]?.points ?? [];
+  const xLabels = seriesWithVisiblePoints[0]?.points ?? [];
   const tickIndices = xLabels.reduce<number[]>((acc, _, index) => {
     if (index === 0 || index === xLabels.length - 1 || index % Math.max(1, Math.floor(xLabels.length / 5)) === 0) {
       acc.push(index);
@@ -466,7 +475,7 @@ function MovingAverageLoadChart({ points }: { points: HistoryPoint[] }) {
       })}
       <line x1={padL} y1={padT + chartH} x2={padL + chartW} y2={padT + chartH} stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
       <line x1={padL} y1={padT} x2={padL} y2={padT + chartH} stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
-      {series.map((serie) => {
+      {seriesWithVisiblePoints.map((serie) => {
         const polyline = serie.points.map((point, index) => `${toX(index)},${toY(point.value)}`).join(" ");
         return (
           <g key={serie.window}>
@@ -485,7 +494,7 @@ function MovingAverageLoadChart({ points }: { points: HistoryPoint[] }) {
       <text x={padL + chartW / 2} y={height - 4} textAnchor="middle" fontSize="10" fill="currentColor" opacity="0.7">Date</text>
       <text x={10} y={padT + chartH / 2} textAnchor="middle" fontSize="10" fill="currentColor" opacity="0.7" transform={`rotate(-90, 10, ${padT + chartH / 2})`}>Absolute Load</text>
       <text x={padL + chartW - 12} y={padT + 14} textAnchor="end" fontSize="10" fill="currentColor" opacity="0.7">Higher smoothing = slower response</text>
-      {series.map((serie, index) => (
+      {seriesWithVisiblePoints.map((serie, index) => (
         <g key={`legend-${serie.window}`}>
           <line x1={padL + 10} y1={padT + 18 + index * 14} x2={padL + 28} y2={padT + 18 + index * 14} stroke={serie.color} strokeWidth="2.2" />
           <text x={padL + 34} y={padT + 22 + index * 14} fontSize="10" fill="currentColor" opacity="0.75">{serie.window}-day MA</text>
@@ -2052,12 +2061,28 @@ function App() {
 
           {/* Absolute load moving averages */}
           <article className="panel full-width">
-            <h2>Absolute Load Moving Averages</h2>
-            <p className="muted-hint">Daily absolute load smoothed with 5-, 7-, 10-, and 14-day moving averages.</p>
+            <div className="panel-header-row">
+              <h2>Absolute Load Moving Averages</h2>
+              <select className="range-select" value={historyRange ?? "all"} onChange={(e) => {
+                const v = e.target.value;
+                if (v === "all") {
+                  setHistoryRange(null);
+                } else {
+                  setHistoryRange(Number(v) as 7 | 14 | 21 | 28 | 90);
+                }
+              }}>
+                <option value={7}>Last 7 days</option>
+                <option value={14}>Last 14 days</option>
+                <option value={28}>Last 28 days</option>
+                <option value={90}>Last 90 days</option>
+                <option value="all">All time</option>
+              </select>
+            </div>
+            <p className="muted-hint">Daily absolute load smoothed with 7-, 14-, and 28-day moving averages.</p>
             {sessionHistory.length < 2 ? (
               <p>Log at least 2 sessions to see the moving-average graph.</p>
             ) : (
-              <MovingAverageLoadChart points={sessionHistory} />
+              <MovingAverageLoadChart points={sessionHistory} rangeDays={historyRange} />
             )}
           </article>
 
