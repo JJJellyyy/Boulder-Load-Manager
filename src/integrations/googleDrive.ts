@@ -22,51 +22,23 @@ export interface GoogleProfile {
   picture?: string;
 }
 
-/** Generate PKCE code challenge from verifier */
-async function generateCodeChallenge(verifier: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(verifier);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return btoa(hashArray.map((b) => String.fromCharCode(b)).join(""))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
-/** Generate random PKCE code verifier */
-function generateCodeVerifier(): string {
-  const array = new Uint8Array(32);
-  crypto.getRandomValues(array);
-  return btoa(String.fromCharCode.apply(null, Array.from(array)))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
-/** Redirect the browser to Google's OAuth consent page using Authorization Code Flow with PKCE. */
+/** Redirect the browser to Google's OAuth consent page using an implicit-token flow for the browser app. */
 export async function initiateGoogleOAuthRedirect(clientId: string): Promise<void> {
   const redirectUri = window.location.origin + "/";
-  const codeVerifier = generateCodeVerifier();
-  const codeChallenge = await generateCodeChallenge(codeVerifier);
-  
-  // Store verifier for token exchange (will be used in callback)
-  sessionStorage.setItem(CODE_VERIFIER_KEY, codeVerifier);
-  
+
   console.log("OAuth Debug Info:", {
     clientId: clientId.split(".")[0] + "...",
     redirectUri,
-    flow: "Authorization Code with PKCE",
+    flow: "implicit token flow",
   });
-  
+
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
-    response_type: "code",
+    response_type: "token",
     scope: DRIVE_SCOPE,
-    code_challenge: codeChallenge,
-    code_challenge_method: "S256",
     prompt: "consent",
+    include_granted_scopes: "true",
   });
   window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
 }
@@ -78,35 +50,44 @@ export async function initiateGoogleOAuthRedirect(clientId: string): Promise<voi
  * or returns null if no OAuth response is present.
  */
 export async function extractOAuthTokenFromUrl(clientId: string): Promise<GoogleAuthSession | null> {
-  const params = new URLSearchParams(window.location.search);
+  const searchParams = new URLSearchParams(window.location.search);
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
 
-  const error = params.get("error");
+  const error = searchParams.get("error") ?? hashParams.get("error");
   if (error) {
     window.history.replaceState(null, "", window.location.pathname);
-    
-    const errorDescription = params.get("error_description") ?? "";
+
+    const errorDescription = searchParams.get("error_description") ?? hashParams.get("error_description") ?? "";
     let helpText = "";
-    
+
     if (error === "invalid_client") {
-      helpText = "\n\nTo fix this:\n1. Go to Google Cloud Console → APIs & Services → Credentials\n2. Edit your OAuth 2.0 Client ID (Web application)\n3. Ensure the Redirect URI is set to: " + window.location.origin + "/\n4. Check that JavaScript Origins includes: " + window.location.origin + "\n5. Make sure 'Use secure flows' is configured in your OAuth settings";
+      helpText = "\n\nTo fix this:\n1. Go to Google Cloud Console → APIs & Services → Credentials\n2. Edit your OAuth 2.0 Client ID (Web application)\n3. Ensure the Redirect URI is set to: " + window.location.origin + "/\n4. Check that JavaScript Origins includes: " + window.location.origin;
     }
-    
+
     throw new Error(`Google OAuth error: ${error} — ${errorDescription}${helpText}`);
   }
 
-  const code = params.get("code");
+  const accessToken = hashParams.get("access_token");
+  if (accessToken) {
+    const expiresIn = Number(hashParams.get("expires_in") ?? "3600");
+    window.history.replaceState(null, "", window.location.pathname);
+    return {
+      accessToken,
+      expiresAt: Date.now() + Math.max(60, expiresIn) * 1000,
+    };
+  }
+
+  const code = searchParams.get("code");
   if (!code) return null;
-  
+
   const codeVerifier = sessionStorage.getItem(CODE_VERIFIER_KEY);
   if (!codeVerifier) {
     throw new Error("OAuth session lost. Please try again.");
   }
-  
-  // Clean up the URL
+
   window.history.replaceState(null, "", window.location.pathname);
   sessionStorage.removeItem(CODE_VERIFIER_KEY);
-  
-  // Exchange code for token via backend
+
   const redirectUri = window.location.origin + "/";
   const response = await fetch("/api/oauth/exchange", {
     method: "POST",
@@ -118,12 +99,12 @@ export async function extractOAuthTokenFromUrl(clientId: string): Promise<Google
       redirect_uri: redirectUri,
     }),
   });
-  
+
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Failed to exchange auth code for token: ${error}`);
+    const errorText = await response.text();
+    throw new Error(`Failed to exchange auth code for token: ${errorText}`);
   }
-  
+
   const data = (await response.json()) as { access_token: string; expires_in: number };
   return {
     accessToken: data.access_token,
