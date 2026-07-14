@@ -318,14 +318,19 @@ export function buildSessionHistory(
 export function buildMovingAverageSeries(history: HistoryPoint[], windowDays: number): MovingAveragePoint[] {
   if (history.length === 0 || windowDays <= 0) return [];
 
-  const effectiveWindow = Math.min(windowDays, history.length);
+  const points: MovingAveragePoint[] = [];
+  const rolling: number[] = [];
 
-  return history.map((point, index) => {
-    const start = Math.max(0, index - effectiveWindow + 1);
-    const slice = history.slice(start, index + 1);
-    const average = slice.reduce((sum, item) => sum + item.load, 0) / slice.length;
-    return { date: point.date, average };
-  });
+  for (const point of history) {
+    rolling.push(point.load);
+    if (rolling.length > windowDays) {
+      rolling.shift();
+    }
+    const average = rolling.reduce((sum, value) => sum + value, 0) / rolling.length;
+    points.push({ date: point.date, average });
+  }
+
+  return points;
 }
 
 export function suggestedCapacityRange(climberMaxGrade: Grade): { min: number; max: number } {

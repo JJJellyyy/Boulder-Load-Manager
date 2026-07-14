@@ -29,7 +29,6 @@ import {
   gradeToDisplay,
   gradeToNumber,
   suggestedCapacityRange,
-  estimateSimpleLoad,
   buildSessionHistory,
   buildMovingAverageSeries,
   getSessionDayKey,
@@ -812,32 +811,48 @@ function App() {
   const plannerPrediction = useMemo(() => {
     const snapshots = Object.values(ewmaSnapshots);
     if (snapshots.length === 0) return null;
-    let prevAcute = snapshots.reduce((s, snap) => s + getEwmaValue(snap, settings.model.acwr.acuteWindow), 0);
-    let prevChronic = snapshots.reduce((s, snap) => s + getEwmaValue(snap, settings.model.acwr.chronicWindow), 0);
-    if (prevChronic === 0) return null;
 
     const acuteWindow = settings.model.acwr.acuteWindow;
     const chronicWindow = settings.model.acwr.chronicWindow;
     const acuteAlpha = 2 / (acuteWindow + 1);
     const chronicAlpha = 2 / (chronicWindow + 1);
 
-    // Apply time decay from last session to planned date
+    let prevAcute = snapshots.reduce((s, snap) => s + getEwmaValue(snap, acuteWindow), 0);
+    let prevChronic = snapshots.reduce((s, snap) => s + getEwmaValue(snap, chronicWindow), 0);
+    if (prevChronic === 0) return null;
+
     if (sessions.length > 0) {
       const lastSession = sessions[sessions.length - 1];
       const lastSessionDate = new Date(lastSession.createdAt);
       const lastDate = new Date(lastSessionDate.getUTCFullYear(), lastSessionDate.getUTCMonth(), lastSessionDate.getUTCDate());
-      
       const plannedDate = new Date(`${plannerDate}T00:00:00Z`);
       const daysBetween = Math.max(0, Math.floor((plannedDate.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24)));
-      
-      // Apply decay for each day between last session and planned session
+
       for (let i = 0; i < daysBetween; i++) {
         prevAcute = (1 - acuteAlpha) * prevAcute;
         prevChronic = (1 - chronicAlpha) * prevChronic;
       }
     }
 
-    const actualLoad = estimateSimpleLoad(plannerCount, plannerDuration, plannerGrade, plannerSleep, plannerStress, settings);
+    const plannedSession = {
+      id: "planner",
+      createdAt: new Date(`${plannerDate}T12:00:00Z`).toISOString(),
+      durationMinutes: plannerDuration,
+      sleepHours: plannerSleep,
+      stress: plannerStress,
+      motivation: 5,
+      problems: [
+        {
+          id: "planner-problem",
+          count: plannerCount,
+          grade: plannerGrade,
+          holdType: "mixed" as HoldType,
+          wallAngle: "mixed" as WallAngle,
+        },
+      ],
+    };
+
+    const actualLoad = calculateSessionLoad(plannedSession, settings).totalLoad;
     const newAcute = acuteAlpha * actualLoad + (1 - acuteAlpha) * prevAcute;
     const predAcwr = prevChronic > 0 ? newAcute / prevChronic : 0;
     return { predAcwr, actualLoad };
