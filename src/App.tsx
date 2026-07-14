@@ -453,6 +453,10 @@ function MovingAverageLoadChart({ points }: { points: HistoryPoint[] }) {
     return acc;
   }, []);
 
+  if (xLabels.length === 0) {
+    return <p>Log a few sessions to see the moving-average graph.</p>;
+  }
+
   return (
     <svg className="acwr-history-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Moving average load history">
       <rect x={padL} y={padT} width={chartW} height={chartH} rx={12} fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.08)" />
