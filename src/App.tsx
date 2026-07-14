@@ -431,7 +431,7 @@ function MovingAverageLoadChart({ points }: { points: HistoryPoint[] }) {
   const chartW = width - padL - padR;
   const chartH = height - padT - padB;
 
-  const windows = [5, 7, 10, 14] as const;
+  const windows = [7, 14, 21, 28] as const;
   const colors = ["#0ea5e9", "#f59e0b", "#22c55e", "#8b5cf6"];
   const series = windows.map((window, index) => ({
     window,
@@ -440,8 +440,10 @@ function MovingAverageLoadChart({ points }: { points: HistoryPoint[] }) {
   }));
 
   const maxValue = Math.max(1, ...series.flatMap((serie) => serie.points.map((point) => point.value)));
+  const minValue = Math.min(0, ...series.flatMap((serie) => serie.points.map((point) => point.value)));
+  const ySpan = Math.max(1, maxValue - minValue);
   const toX = (index: number) => padL + (index / Math.max(1, series[0].points.length - 1)) * chartW;
-  const toY = (value: number) => padT + chartH - (value / maxValue) * chartH;
+  const toY = (value: number) => padT + chartH - ((value - minValue) / ySpan) * chartH;
 
   const xLabels = series[0]?.points ?? [];
   const tickIndices = xLabels.reduce<number[]>((acc, _, index) => {
@@ -453,6 +455,11 @@ function MovingAverageLoadChart({ points }: { points: HistoryPoint[] }) {
 
   return (
     <svg className="acwr-history-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Moving average load history">
+      <rect x={padL} y={padT} width={chartW} height={chartH} rx={12} fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.08)" />
+      {Array.from({ length: 4 }, (_, i) => {
+        const y = padT + (i / 3) * chartH;
+        return <line key={i} x1={padL} y1={y} x2={padL + chartW} y2={y} stroke="currentColor" strokeOpacity="0.08" strokeWidth="1" />;
+      })}
       <line x1={padL} y1={padT + chartH} x2={padL + chartW} y2={padT + chartH} stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
       <line x1={padL} y1={padT} x2={padL} y2={padT + chartH} stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
       {series.map((serie) => {
@@ -473,6 +480,7 @@ function MovingAverageLoadChart({ points }: { points: HistoryPoint[] }) {
       ))}
       <text x={padL + chartW / 2} y={height - 4} textAnchor="middle" fontSize="10" fill="currentColor" opacity="0.7">Date</text>
       <text x={10} y={padT + chartH / 2} textAnchor="middle" fontSize="10" fill="currentColor" opacity="0.7" transform={`rotate(-90, 10, ${padT + chartH / 2})`}>Absolute Load</text>
+      <text x={padL + chartW - 12} y={padT + 14} textAnchor="end" fontSize="10" fill="currentColor" opacity="0.7">Higher smoothing = slower response</text>
       {series.map((serie, index) => (
         <g key={`legend-${serie.window}`}>
           <line x1={padL + 10} y1={padT + 18 + index * 14} x2={padL + 28} y2={padT + 18 + index * 14} stroke={serie.color} strokeWidth="2.2" />
@@ -641,7 +649,7 @@ function App() {
   const [driveLog, setDriveLog] = useState<string[]>([]);
   const [notification, setNotification] = useState<string | undefined>(undefined);
   // Dashboard history graph
-  const [historyRange, setHistoryRange] = useState<30 | 90 | null>(30);
+  const [historyRange, setHistoryRange] = useState<7 | 14 | 21 | 28 | 90 | null>(14);
   // Next-session planner
   const [plannerGrade, setPlannerGrade] = useState<Grade>("V5");
   const [plannerCount, setPlannerCount] = useState<number>(20);
@@ -2012,9 +2020,16 @@ function App() {
               <h2>ACWR History</h2>
               <select className="range-select" value={historyRange ?? "all"} onChange={(e) => {
                 const v = e.target.value;
-                setHistoryRange(v === "all" ? null : (Number(v) as 30 | 90));
+                if (v === "all") {
+                  setHistoryRange(null);
+                } else {
+                  setHistoryRange(Number(v) as 7 | 14 | 21 | 28 | 90);
+                }
               }}>
-                <option value={30}>Last 30 days</option>
+                <option value={7}>Last 7 days</option>
+                <option value={14}>Last 14 days</option>
+                <option value={21}>Last 21 days</option>
+                <option value={28}>Last 28 days</option>
                 <option value={90}>Last 90 days</option>
                 <option value="all">All time</option>
               </select>
